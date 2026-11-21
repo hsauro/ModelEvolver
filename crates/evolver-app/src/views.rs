@@ -510,15 +510,82 @@ impl App {
 
     // ------------------------------------------------------------------ Model
 
+    /// The model picker: every success (best first) plus running experiments.
+    fn model_picker(&mut self, ui: &mut egui::Ui) {
+        let successes = self.sorted_results(true);
+        let current = match self.selection {
+            Some(Selection::Result(i)) => self.results.get(i).map_or(String::new(), |e| {
+                format!("Experiment {}.{}  (fitness {})", e.run, e.r.id, fmt_fit(e.r.fitness))
+            }),
+            Some(Selection::Live(id)) => format!("Running experiment {id} (current best)"),
+            None => "Choose a model".into(),
+        };
+        let mut pick = None;
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Model").strong());
+            egui::ComboBox::from_id_salt("model_picker").width(340.0).selected_text(current).show_ui(ui, |ui| {
+                if successes.is_empty() {
+                    ui.label(RichText::new("No successful models yet").weak());
+                }
+                for (rank, &i) in successes.iter().enumerate() {
+                    let e = &self.results[i];
+                    let label = format!(
+                        "{}. Experiment {}.{}  -  fitness {}  -  {} reactions",
+                        rank + 1,
+                        e.run,
+                        e.r.id,
+                        fmt_fit(e.r.fitness),
+                        e.r.reduced.reactions.len()
+                    );
+                    if ui.selectable_label(self.selection == Some(Selection::Result(i)), label).clicked() {
+                        pick = Some(Selection::Result(i));
+                    }
+                }
+                let live: Vec<u32> =
+                    self.runner.live.values().filter(|l| l.best_network.is_some()).map(|l| l.id).collect();
+                if !live.is_empty() {
+                    ui.separator();
+                    for id in live {
+                        if ui
+                            .selectable_label(self.selection == Some(Selection::Live(id)), format!("Running experiment {id} (current best)"))
+                            .clicked()
+                        {
+                            pick = Some(Selection::Live(id));
+                        }
+                    }
+                }
+            });
+            ui.label(RichText::new(format!("{} successes", successes.len())).weak());
+        });
+        match pick {
+            Some(Selection::Result(i)) => self.open_result(i),
+            Some(Selection::Live(id)) => self.open_live(id),
+            None => {}
+        }
+    }
+
     pub fn model_tab(&mut self, ui: &mut egui::Ui) {
+        // With nothing chosen yet, show the best model of the session.
+        if self.selection.is_none()
+            && let Some(best) = self.best_result()
+        {
+            self.selection = Some(Selection::Result(best));
+            self.model.cache = None;
+        }
+        self.model_picker(ui);
+        ui.add_space(2.0);
         // Resolve what to show: network, settings, Antimony text, trajectory source.
         let (net, cfg, target, text, title, result): (Network, std::rc::Rc<EvolverConfig>, std::rc::Rc<Target>, String, String, Option<ExperimentResult>) =
             match self.selection {
                 None => {
                     ui.add_space(20.0);
                     ui.vertical_centered(|ui| {
-                        ui.label(RichText::new("No model selected.").size(16.0).weak());
-                        ui.label(RichText::new("Open one from Results or Grid, or 'View best' on a running experiment.").weak());
+                        ui.label(RichText::new("No successful models yet.").size(16.0).weak());
+                        ui.label(
+                            RichText::new("The best model appears here as soon as a run produces one. You can also pick a running \
+                                           experiment's current best from the list above.")
+                            .weak(),
+                        );
                     });
                     return;
                 }
