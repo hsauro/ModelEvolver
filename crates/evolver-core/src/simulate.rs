@@ -47,6 +47,8 @@ pub enum SimError {
     Solver { t: f64, message: String },
     TooManySteps { t: f64 },
     Runaway { t: f64 },
+    /// A species keeps growing through the window (state index).
+    Drift { state: usize },
 }
 
 impl std::fmt::Display for SimError {
@@ -57,6 +59,7 @@ impl std::fmt::Display for SimError {
             SimError::Solver { t, message } => write!(f, "solver failed at t = {t:.4}: {message}"),
             SimError::TooManySteps { t } => write!(f, "too many solver steps near t = {t:.4}"),
             SimError::Runaway { t } => write!(f, "a concentration ran away at t = {t:.4}"),
+            SimError::Drift { state } => write!(f, "floating species {state} grows without bound"),
         }
     }
 }

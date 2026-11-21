@@ -434,6 +434,8 @@ impl App {
             ui.checkbox(&mut self.prefs.grid_all_species, "All species")
                 .on_hover_text("Show every floating species instead of only the best-scoring one");
             ui.checkbox(&mut self.prefs.grid_include_failed, "Include non-successes");
+            ui.checkbox(&mut self.prefs.grid_y_from_zero, "Y axis from zero")
+                .on_hover_text("Start every plot's y axis at 0 (off: fit the axis to the data)");
         });
         if rows.is_empty() {
             ui.add_space(20.0);
@@ -486,6 +488,7 @@ impl App {
         };
         let page: Vec<usize> = rows.iter().skip(self.grid_page * per_page).take(per_page).copied().collect();
         let mut open = None;
+        let y_from_zero = self.prefs.grid_y_from_zero;
         // Simulate at most a few new grid plots per frame so the UI stays responsive.
         let mut budget = 4;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -538,7 +541,7 @@ impl App {
                                         .show_y(false)
                                         .show(ui, |p| {
                                             add_lines(p, traj, &e.r.reduced, Some(e.r.best_node), only, &Default::default());
-                                            if let Some(b) = tail_bounds(traj, only) {
+                                            if let Some(b) = tail_bounds(traj, only, y_from_zero) {
                                                 p.set_plot_bounds(b);
                                             }
                                         })
@@ -827,7 +830,7 @@ const GRID_POINTS: usize = 1000;
 
 /// Plot bounds covering the whole time span and the y-range after the first
 /// 40% (the transient), so an early spike does not flatten the oscillation.
-fn tail_bounds(traj: &Trajectory, only: Option<usize>) -> Option<egui_plot::PlotBounds> {
+fn tail_bounds(traj: &Trajectory, only: Option<usize>, from_zero: bool) -> Option<egui_plot::PlotBounds> {
     let n = traj.t.len();
     if n < 2 {
         return None;
@@ -847,7 +850,8 @@ fn tail_bounds(traj: &Trajectory, only: Option<usize>) -> Option<egui_plot::Plot
         return None;
     }
     let pad = ((hi - lo) * 0.08).max(1e-9);
-    Some(egui_plot::PlotBounds::from_min_max([traj.t[0], lo - pad], [traj.t[n - 1], hi + pad]))
+    let low = if from_zero { lo.min(0.0) } else { lo - pad };
+    Some(egui_plot::PlotBounds::from_min_max([traj.t[0], low], [traj.t[n - 1], hi + pad]))
 }
 
 fn fmt_fit(f: f64) -> String {

@@ -139,6 +139,26 @@ fn score(dir: &str, t_end: f64, points: usize) {
     }
 }
 
+/// How many models have a species that keeps growing (see `drifting_species`).
+fn drift(dir: &str, t_end: f64, points: usize) {
+    let models = load_dir(dir);
+    let opts = SimOptions { t_end, n_points: points, ..Default::default() };
+    let mut flagged = Vec::new();
+    let mut ok = 0;
+    for m in &models {
+        if let Ok((f, _, traj)) = oscillation_fitness(&m.model.net, &m.model.init, &opts) {
+            ok += 1;
+            if let Some(j) = evolver_core::objective::drifting_species(&traj, 0.1) {
+                flagged.push((m.name.clone(), j, f));
+            }
+        }
+    }
+    println!("window t = 0..{t_end}: {} of {ok} simulated models have a drifting species", flagged.len());
+    for (name, j, f) in flagged.iter().take(10) {
+        println!("  {name}: floating species {j}, oscillation fitness {f:.4}");
+    }
+}
+
 fn tolerances(dir: &str) {
     let models = load_dir(dir);
     let base = SimOptions { t_end: 150.0, n_points: 2048, ..Default::default() };
@@ -193,6 +213,11 @@ fn main() {
             score(&args[1], t_end, points);
         }
         Some("tol") if args.len() >= 2 => tolerances(&args[1]),
+        Some("drift") if args.len() >= 2 => {
+            let t_end = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(300.0);
+            let points = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(4096);
+            drift(&args[1], t_end, points);
+        }
         _ => eprintln!("usage: tune score DIR [T_END POINTS] | tune tol DIR"),
     }
 }

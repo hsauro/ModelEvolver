@@ -250,6 +250,16 @@ impl App {
                 ch |= frac(ui, "stop when fitness below", &mut c.osc_stop_threshold, "An experiment converges below this");
                 ch |= frac(ui, "viable when fitness below", &mut c.osc_viable_threshold, "A model counts as a success below this");
                 ch |= frac(ui, "reduction margin", &mut c.osc_reduce_margin, "How much worse a reduced model may be");
+                ch |= ui
+                    .checkbox(&mut c.reject_drift, "Reject species that grow without bound")
+                    .on_hover_text(
+                        "Reject a network if any species keeps rising through the simulation \
+                         (slowly heading to infinity), even while another species oscillates",
+                    )
+                    .changed();
+                if c.reject_drift {
+                    ch |= frac(ui, "drift tolerance", &mut c.drift_tolerance, "Growth (fraction of the level) counted as drift");
+                }
                 ch |= num(ui, "confirmation end time", &mut c.osc_confirm_t_end, 0.0..=1e6, "Longer check of the best model (0 = off)");
                 ch |= num(ui, "confirmation points", &mut c.osc_confirm_n_points, 32..=65_536, "Samples in the confirmation check");
             }),

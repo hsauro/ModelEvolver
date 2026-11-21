@@ -133,6 +133,12 @@ pub fn evaluate(net: &Network, cfg: &EvolverConfig, ctx: &RunContext, window: Wi
     }
     let model = net.compile(&ctx.init);
     let trajectory = simulate(&model, &opts)?;
+    if cfg.objective == ObjectiveKind::Oscillation
+        && cfg.reject_drift
+        && let Some(state) = drifting_species(&trajectory, cfg.drift_tolerance)
+    {
+        return Err(SimError::Drift { state });
+    }
     let node_scores: Vec<f64> = match cfg.objective {
         ObjectiveKind::Oscillation => {
             let dt = opts.t_end / (opts.n_points - 1) as f64;
@@ -146,6 +152,26 @@ pub fn evaluate(net: &Network, cfg: &EvolverConfig, ctx: &RunContext, window: Wi
     };
     let fitness = node_scores.iter().cloned().fold(f64::INFINITY, f64::min);
     Ok(Evaluation { fitness, node_scores, trajectory })
+}
+
+/// The first floating species (state index) that keeps growing through the
+/// window: after the transient (first 40%), its mean rises over three equal
+/// blocks, by more than `tolerance` of its level overall, without slowing down
+/// much (a slow approach to a steady level decelerates; unbounded growth does not).
+pub fn drifting_species(traj: &Trajectory, tolerance: f64) -> Option<usize> {
+    let n = traj.t.len();
+    let start = n * 2 / 5;
+    let len = (n - start) / 3;
+    if len < 4 {
+        return None;
+    }
+    let mean = |c: &[f64], k: usize| c[start + k * len..start + (k + 1) * len].iter().sum::<f64>() / len as f64;
+    traj.cols.iter().position(|c| {
+        let (m1, m2, m3) = (mean(c, 0), mean(c, 1), mean(c, 2));
+        let (d1, d2) = (m2 - m1, m3 - m2);
+        let scale = m1.abs().max(m3.abs()).max(1e-6);
+        d1 > 0.0 && d2 > 0.0 && (m3 - m1) > tolerance * scale && d2 >= 0.5 * d1
+    })
 }
 
 /// Oscillation fitness with explicit options (used by the M0 benchmark).
@@ -184,6 +210,25 @@ mod tests {
         let c = evaluate(&pascal_oscillator(), &cfg, &ctx, Window::Confirm).unwrap();
         assert!(c.fitness < 0.05, "confirm fitness {}", c.fitness);
         assert_eq!(c.trajectory.t.len(), cfg.osc_confirm_n_points);
+    }
+
+    #[test]
+    fn drift_detection() {
+        let n = 1000;
+        let t: Vec<f64> = (0..n).map(|i| i as f64 * 0.3).collect();
+        let osc: Vec<f64> = t.iter().map(|&x| 5.0 + 2.0 * (x / 2.0).sin()).collect();
+        let traj = |second: Vec<f64>| Trajectory { t: t.clone(), cols: vec![osc.clone(), second], steps: 0 };
+        // Steady oscillator plus a constant species: fine.
+        assert_eq!(drifting_species(&traj(vec![3.0; n]), 0.1), None);
+        // A species growing linearly (slowly heading to infinity): drift.
+        assert_eq!(drifting_species(&traj(t.iter().map(|&x| 1.0 + 0.5 * x).collect()), 0.1), Some(1));
+        // Slow exponential growth: drift.
+        assert_eq!(drifting_species(&traj(t.iter().map(|&x| (x / 60.0).exp()).collect()), 0.1), Some(1));
+        // A fast approach to a steady level: fine.
+        assert_eq!(drifting_species(&traj(t.iter().map(|&x| 10.0 - 9.0 * (-x / 10.0).exp()).collect()), 0.1), None);
+        // An oscillating species growing slowly on average: drift.
+        let grow: Vec<f64> = t.iter().map(|&x| 5.0 + 0.05 * x + 2.0 * (x / 2.0).sin()).collect();
+        assert_eq!(drifting_species(&traj(grow), 0.1), Some(1));
     }
 
     #[test]

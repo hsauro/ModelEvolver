@@ -71,6 +71,11 @@ pub struct EvolverConfig {
     /// continuous mode a fresh experiment takes its place.
     pub abandon_generation: u32,
     pub abandon_threshold: f64,
+    /// Reject networks in which a species keeps growing (slowly heading to
+    /// infinity) through the simulated window (oscillation objective).
+    pub reject_drift: bool,
+    /// Growth (as a fraction of the species' level) beyond which it counts as drift.
+    pub drift_tolerance: f64,
     /// Confirmation window; `osc_confirm_t_end <= 0` disables confirmation.
     pub osc_confirm_t_end: f64,
     pub osc_confirm_n_points: usize,
@@ -137,6 +142,8 @@ impl Default for EvolverConfig {
             osc_stop_threshold: 0.05,
             osc_viable_threshold: 0.3,
             osc_reduce_margin: 0.05,
+            reject_drift: true,
+            drift_tolerance: 0.1,
             abandon_generation: 100,
             abandon_threshold: 0.3,
             osc_confirm_t_end: 300.0,

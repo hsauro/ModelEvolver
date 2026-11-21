@@ -57,6 +57,8 @@ pub struct Prefs {
     pub grid_include_failed: bool,
     /// Size the grid so every model fits on one page.
     pub grid_fit_all: bool,
+    /// Start the grid's y axes at zero.
+    pub grid_y_from_zero: bool,
     /// End time of the grid plots (each visible model is re-simulated on 0..this).
     pub grid_t_end: f64,
     /// End time and number of points of the Model tab's time course.
@@ -75,6 +77,7 @@ impl Default for Prefs {
             grid_all_species: false,
             grid_include_failed: false,
             grid_fit_all: false,
+            grid_y_from_zero: true,
             grid_t_end: 100.0,
             model_t_end: 100.0,
             model_points: 1000,
