@@ -165,9 +165,12 @@ The misleading comment is not carried over.
 (`numberOfInputBoundarySpecies = 0 -> badModel`). Mutation does not re-check this rule,
 so the population can drift into models that the initial generator would have rejected.
 
-Rust fix: one `Network::is_viable()` predicate. Whether it requires an input boundary
-species is a config option (`require_input_boundary`, default true), and it is applied
-both at creation and after mutation.
+Rust fix: one `is_viable()` predicate applied at creation and after mutation.
+Requiring an input boundary species is a config option (`require_input_boundary`),
+**default off**. Many oscillators the Pascal version actually evolved are closed
+networks with no input boundary (for example the test oscillator from
+`results_osc_1`, seed 10003), which mutation could reach only because the rule was
+not re-checked. Enforcing it everywhere would exclude them.
 
 ## B14 (Medium) `reduceModel` output can be inconsistent
 
@@ -243,3 +246,19 @@ thresholds (`oscViableThreshold = 0.3`, `oscFitnessThresholdToStop = 0.05`).
 
 Rust fix: the harmonic fraction is computed exactly as in Python (exact-length FFT
 via `rustfft`, the same window bounds). Unit tests check the Python golden values to 1e-5.
+
+## B20 (Medium) The upper bounds of the species and reaction ranges are never drawn
+
+`uIndividual.pas`, `TIndividual.Create`:
+
+```pascal
+nSpecies   := rndRange (experimentInfo.minNumberOfSpecies,   experimentInfo.maxNumberOfSpecies);
+nReactions := rndRange (experimentInfo.minNumberOfReactions, experimentInfo.maxNumberOfReactions);
+```
+
+`rndRange(lo, hi)` (like `Math.RandomRange`) returns `lo .. hi-1`, so a network never
+has `maxNumberOfSpecies` species or `maxNumberOfReactions` reactions unless min = max
+(then it returns `lo`). With `minNumberOfReactions=3`, `maxNumberOfReactions=9`, a
+network gets 3..8 reactions. B1 currently hides this for species.
+
+Rust fix: both ranges are inclusive (`range(min, max + 1)`).

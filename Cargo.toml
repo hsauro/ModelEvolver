@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/evolver-core",
     "crates/evolver-app",
+    "crates/evolver-cli",
     "crates/antimony",
     "crates/sbml-io",
 ]

@@ -62,7 +62,7 @@ impl std::fmt::Display for SimError {
 }
 
 /// A sampled solution: `t[i]`, and one column per floating species.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Trajectory {
     pub t: Vec<f64>,
     pub cols: Vec<Vec<f64>>,

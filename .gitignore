@@ -1,2 +1,3 @@
 /target
 /crates/evolver-app/dist
+/results*

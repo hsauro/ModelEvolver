@@ -1253,9 +1253,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "evolver-cli"
+version = "0.1.0"
+dependencies = [
+ "evolver-core",
+ "serde_json",
+]
+
+[[package]]
 name = "evolver-core"
 version = "0.1.0"
 dependencies = [
+ "antimony-rs",
  "diffsol",
  "getrandom 0.3.4",
  "rustfft",

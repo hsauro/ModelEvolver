@@ -304,7 +304,7 @@ This is a port of `uReactionPatterns.pas`, unchanged in behaviour:
 | `elite_fraction` | 0.4 | `percentageClone` |
 | `p_rate_mutation, p_add_reaction, p_delete_reaction` | 0.5, 0.225, 0.275 | config |
 | `rate_change_fraction` | 0.2 (must be < 2, B16) | `percentageByWhichRateConstantChanges` |
-| `objective` | `Ssd` / `Oscillation` | `-osc` |
+| `objective` | `Oscillation` (default) / `TimeCourse` | `-osc` |
 | `ssd_stop_threshold` | 50.0 (B11: single default) | `fitnessThresholdToStop` |
 | `ssd_viable_threshold` | 100 | `FittnessThresholdForViableModel` |
 | `ssd_stagnation_rules` | on (fitness>800 after gen 600; <30 after gen 800) | hard-coded in loop |
@@ -316,7 +316,7 @@ This is a port of `uReactionPatterns.pas`, unchanged in behaviour:
 | `max_concentration_cap` | 1000 | config |
 | `rtol, atol, max_steps_per_interval` | 1e-6, 1e-10, 500 | CVODE wrapper |
 | `initial_concentrations` | Pascal table | `uGlobal.pas` |
-| `require_input_boundary` | true | B13 |
+| `require_input_boundary` | false (see B13) | B13 |
 | `add_random_networks, num_random_networks` | false, 10 | globals |
 | pattern constraints | off | config |
 | `add_tellurium_harness` | false | `-addTellHarness` |
@@ -324,6 +324,11 @@ This is a port of `uReactionPatterns.pas`, unchanged in behaviour:
 
 `validate()` rejects `min > max`, probabilities that are negative or all zero,
 `elite_fraction` outside [0,1], `rate_change_fraction >= 2`, and `n_points < 2`.
+
+Presets: `EvolverConfig::default()` is the Pascal built-in defaults (with the oscillation
+objective); `EvolverConfig::oscillator_preset()` is the `config.ini` that produced the
+Pascal oscillator corpus, as the Pascal program actually applied it (5 species,
+9 reactions, population 130, ...). The CLI and app start from the oscillator preset.
 
 Importer: reads a Pascal `config.ini` `[ConfigSettings]`, maps the keys, and lists
 unknown or malformed lines (B11). Export/import of the native format is JSON.
@@ -381,7 +386,10 @@ Mutation (`mutate`): clone, then perform 2 mutation draws. Each draw:
 After each structural change, run `classify()`.
 
 Viability (`is_viable`, B13): at least 1 reaction, `n_float >= 2` (the Pascal fitness
-loop requires > 1), and `n_input >= 1` when `require_input_boundary` is set.
+loop requires > 1), and `n_input >= 1` when `require_input_boundary` is set (default
+off: many evolved oscillators are closed networks).
+
+Network sizes are drawn inclusively from `min..=max` (B20).
 
 ### 7.4 Step-able experiment API
 

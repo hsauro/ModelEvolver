@@ -64,3 +64,45 @@ Observations:
   and it works in every browser.
 - The Pascal oscillation score differs from the Python reference it was derived
   from (see objectpascal_bugs.md, B19). The Rust port follows Python.
+
+## M1 - GA core and CLI (2026-11-21)
+
+Native, release build, 20 threads, `evolver-cli` with the oscillator preset
+(Pascal config.ini corpus settings: population 130, 5 species, 9 reactions;
+oscillation window 150 / 2048 points, confirmation 300 / 4096).
+
+| Run | Experiments | Viable | Rate |
+|---|---|---|---|
+| Fixed batch, `-e 20 -s 1` | 20 | 15 (75%) | one every 17.0 s (idle cores at the end of the batch) |
+| Continuous, `--duration 180 -s 77` | 47 | 34 (72%) | one every 11.5 s (5.2/min), 8,660 evaluations/s |
+| Time-course mode, Pascal square-wave target, `-e 20 -s 3` | 20 | 9 (45%) | one every 17.6 s |
+
+- Experiments that converge take 5-250 s; non-converging ones run the full 1600
+  generations (about 220-260 s). The confirmation window rejected several
+  candidates that passed on the evolution window (fitness `inf`: the long
+  simulation failed or ran away).
+- Model reduction typically removes a third to two thirds of the reactions
+  (for example 16 -> 9, 41 -> 11).
+
+### Independent check in Tellurium
+
+`results_m1/MlzYbYdX_3jIr1GL_10_0.0277.txt` (9 reactions, 5 floating species)
+loaded unchanged with `te.loada`, simulated with CVODE (rtol 1e-6, atol 1e-10) on
+t = 0..300 (4096 points), scored with the Python reference: per-species F = 0.965,
+0.957, 0.957, 0.964, 0.959, fitness 0.0351, identical to the 0.035140 the Rust
+version reported for the reduced model.
+
+### Projection for the browser
+
+wasm runs at about half the native speed (M0), so the web version would produce a
+viable model about every 20-25 s on this machine. That is slightly outside the 15-20 s
+target. M2 candidates: tolerance study (atol 1e-10 is inherited from Pascal),
+the shorter Pascal `config.ini` window (80 / 1024), and early abandonment of
+hopeless experiments.
+
+### Open issue
+
+Time-course mode: the Pascal reduction criterion (keep removing reactions while
+the fitness stays within 10x of the unreduced model) lets reduced models degrade a
+lot (46 -> 186, beyond the viable threshold of 100). This needs a decision: keep the
+Pascal criterion, or require the reduced model to stay viable.
