@@ -1,45 +1,51 @@
-//! Work sent to a worker (a Web Worker in the browser, a thread natively),
+//! Work sent to a worker (an OS thread natively, a Web Worker in the browser)
 //! and the replies. Messages cross the Web Worker boundary as JSON.
+
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use evolver_core::objective::oscillation_fitness;
-use evolver_core::rng::Rng;
-use evolver_core::samples::{PASCAL_INITIAL, random_network};
-use evolver_core::simulate::SimOptions;
+use evolver_core::config::EvolverConfig;
+use evolver_core::ga::{Experiment, ExperimentEvent};
+use evolver_core::objective::{RunContext, Target};
 
+/// Run one experiment.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum Request {
-    /// Evaluate `n_evals` random GA-like networks (oscillation fitness).
-    Bench { worker: u32, seed: u64, n_evals: u32 },
+pub struct RunRequest {
+    pub id: u32,
+    pub base_seed: u32,
+    pub cfg: EvolverConfig,
+    pub target: Target,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Reply {
-    Bench { worker: u32, evals: u32, ok: u32, bad: u32, ms: f64 },
-    Error(String),
+    /// A Web Worker has loaded and is listening (messages sent before this are lost).
+    Ready,
+    Event(ExperimentEvent),
 }
 
-pub fn handle(req: Request) -> Reply {
-    match req {
-        Request::Bench { worker, seed, n_evals } => {
-            let opts = SimOptions::default();
-            let mut rng = Rng::new(seed);
-            let start = web_time::Instant::now();
-            let (mut ok, mut bad, mut evals) = (0, 0, 0);
-            while evals < n_evals {
-                let net = random_network(&mut rng, 5, 9, 12.3);
-                if net.n_float < 2 {
-                    continue;
-                }
-                evals += 1;
-                match oscillation_fitness(&net, &PASCAL_INITIAL, &opts) {
-                    Ok(_) => ok += 1,
-                    Err(_) => bad += 1,
-                }
+/// Send a Progress event at least every this many generations (and always
+/// when the best network changes).
+const PROGRESS_EVERY: u32 = 5;
+
+/// Run the experiment to the end, calling `emit` with progress (throttled) and
+/// the final Finished/Failed event. `cancelled` is polled between generations.
+pub fn run_experiment(req: RunRequest, mut emit: impl FnMut(Reply), cancelled: impl Fn() -> bool) {
+    let (ctx, _pattern_errors) = RunContext::new(&req.cfg, req.target);
+    let mut exp = Experiment::new(Arc::new(req.cfg), Arc::new(ctx), req.id, req.base_seed);
+    while !exp.is_finished() {
+        if cancelled() {
+            return;
+        }
+        for event in exp.step(1) {
+            let send = match &event {
+                ExperimentEvent::Progress(p) => p.best_network.is_some() || p.generation % PROGRESS_EVERY == 0,
+                _ => true,
+            };
+            if send {
+                emit(Reply::Event(event));
             }
-            let ms = start.elapsed().as_secs_f64() * 1000.0;
-            Reply::Bench { worker, evals, ok, bad, ms }
         }
     }
 }
