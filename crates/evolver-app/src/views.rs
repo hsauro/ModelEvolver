@@ -377,7 +377,15 @@ impl App {
             idx.sort_by(|&a, &b| self.results[a].r.fitness.total_cmp(&self.results[b].r.fitness));
             idx
         };
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Max time")
+                .on_hover_text("End time of the grid plots (each model is re-simulated on 0..this at 1000 points)");
+            let before = self.prefs.grid_t_end;
+            ui.add(egui::DragValue::new(&mut self.prefs.grid_t_end).range(1.0..=100_000.0).speed(1.0));
+            if self.prefs.grid_t_end != before {
+                self.grid_cache.clear();
+            }
+            ui.separator();
             ui.label("Columns");
             ui.add(egui::Slider::new(&mut self.prefs.grid_cols, 1..=8));
             ui.label("Rows per page");
@@ -385,15 +393,6 @@ impl App {
             ui.checkbox(&mut self.prefs.grid_all_species, "All species")
                 .on_hover_text("Show every floating species instead of only the best-scoring one");
             ui.checkbox(&mut self.prefs.grid_include_failed, "Include non-successes");
-            ui.label("Max time");
-            let before = self.prefs.grid_t_end;
-            let r = ui.add(egui::DragValue::new(&mut self.prefs.grid_t_end).range(1.0..=100_000.0).speed(1.0));
-            if self.prefs.grid_t_end != before {
-                self.grid_cache.clear();
-            }
-            r
-                .on_hover_text("End time of the grid plots. Each model is re-simulated on 0..this at 1000 points, \
-                                so short spans stay smooth.");
         });
         if rows.is_empty() {
             ui.add_space(20.0);
