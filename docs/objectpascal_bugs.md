@@ -223,3 +223,23 @@ Rust fix: assign once after all deviations are computed.
 bug, but it blocks a FreePascal build.
 
 Rust fix: not ported.
+
+## B19 (Medium) The oscillation score differs from its Python reference
+
+`uOscillationObjective.pas`, `harmonicFraction`. The Pascal code zero-pads the
+Hann-windowed signal to the next power of two before the FFT. The Python reference
+(`analysis/objective_prototype.py`, `spectral_harmonic_fraction`) uses the exact
+signal length. Padding refines the bin spacing, so each spectral peak spreads over
+more bins than the harmonic windows (`+/- max(1, round(0.03*k*f0))` bins) capture.
+For a pure sine (t = 0..150, 2048 points, period 10), the harmonic fraction is 0.896
+in Pascal versus 0.9999 in Python, so F = 0.794 versus 0.886. Spiky waveforms lose
+more (F = 0.654 versus 0.729).
+
+The fundamental window also uses `Round` where Python truncates (`int(f0b)`), and
+Delphi's `Round` is banker's rounding.
+
+Effect: every oscillator scores lower than intended, which shifts the meaning of the
+thresholds (`oscViableThreshold = 0.3`, `oscFitnessThresholdToStop = 0.05`).
+
+Rust fix: the harmonic fraction is computed exactly as in Python (exact-length FFT
+via `rustfft`, the same window bounds). Unit tests check the Python golden values to 1e-5.

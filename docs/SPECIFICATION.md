@@ -44,9 +44,9 @@ and bit-exact reproduction of Pascal results (the solvers differ).
 | Concern | Choice | Notes |
 |---|---|---|
 | Language | Rust (stable, edition 2024) | toolchain 1.99 present on dev box |
-| ODE solver | `diffsol` (latest, currently 0.18.x), **BDF** method | closure-based `OdeBuilder`, dense nalgebra LU. No DiffSL/LLVM (not available on wasm). |
+| ODE solver | `diffsol` 0.20, **BDF** method | closure-based `OdeBuilder`, dense nalgebra LU. No DiffSL/LLVM (not available on wasm). |
 | Linear algebra | `nalgebra` via diffsol (`NalgebraMat<f64>`, `NalgebraLU<f64>`) | systems are small (<= ~30 states); dense is fastest |
-| GUI | `eframe` / `egui` | same code native + web |
+| GUI | `eframe` / `egui` 0.37, **glow** (WebGL) renderer | same code native + web; glow is smaller than wgpu and works in every browser |
 | Plotting | `egui_plot` | |
 | Web build | `trunk`, target `wasm32-unknown-unknown` | |
 | Web parallelism | Web Workers, one wasm instance per worker | no SharedArrayBuffer needed (GitHub Pages cannot set COOP/COEP) |
@@ -54,7 +54,7 @@ and bit-exact reproduction of Pascal results (the solvers differ).
 | Serialization | `serde`, `serde_json` | config, worker messages, saved sessions |
 | File dialogs | `rfd` (native + web) | |
 | Zip export | `zip` (pure Rust, deflate via `miniz_oxide`) | works on wasm |
-| Antimony | `antimony-rs` (lib name `antimony`), git dependency on the public repo `sys-bio/PathwayDesigner-rs`, pinned to a commit (currently `0732fe1`) | pure Rust, no dependencies, works on wasm. Optional `sbml` feature for SBML export. Not on crates.io yet, so a local `[patch]` path override is used for development |
+| Antimony | `antimony-rs` (lib name `antimony`), **vendored** in `crates/antimony` (with `crates/sbml-io` for the `sbml` feature), copied from PathwayDesigner-rs at `0732fe1` | pure Rust, works on wasm. Our own copy so it can be adjusted here without touching PathwayDesigner |
 | RNG | own xorshift64* port (bit-compatible with `uRandom.pas`) | deterministic per seed, no global state |
 | CI/CD | GitHub Actions: test, clippy, trunk build, deploy to Pages | |
 
@@ -95,8 +95,7 @@ ModelEvolver/
       src/compile.rs         Network -> CompiledModel (flat RHS/Jacobian terms)
       src/simulate.rs        diffsol BDF wrapper, sampling, failure detection
       src/objective/ssd.rs   target time-course objective + file parser
-      src/objective/osc.rs   oscillation score (port of uOscillationObjective.pas)
-      src/fft.rs             radix-2 FFT (or `rustfft` if it builds small on wasm)
+      src/osc.rs             oscillation score (follows the Python reference, B19; FFT via rustfft)
       src/ga.rs              population, selection, mutation, main loop (step-able)
       src/reduce.rs          model reduction (B14 fix)
       src/export.rs          Antimony / Tellurium text output
@@ -104,6 +103,8 @@ ModelEvolver/
       src/experiment.rs      Experiment state machine + events
     evolver-cli/             headless batch runner (dev/validation, parity tests)
     evolver-app/             eframe app (native bin + web entry + worker entry)
+    antimony/                vendored antimony-rs (lib `antimony`)
+    sbml-io/                 vendored sbml-io (for antimony's `sbml` feature)
       index.html             trunk entry
       src/worker.rs          Web Worker entry point
   docs/
@@ -192,6 +193,8 @@ finite-difference Jacobian on random networks.
 - Uniform grid `t_i = i * t_end / (n_points - 1)`, `i = 0..n_points-1`, starting at
   t = 0. Sample 0 is the initial condition.
 - Step BDF until `t >= t_i`, then interpolate.
+- diffsol's own cap of 5000 steps per solve is lifted to `max_total_steps`
+  (default 200,000); oscillators over 150 time units need more than 5000.
 - Failure (-> `badModel`):
   - a diffsol error (Newton or step failure, step size underflow);
   - more than `max_steps_per_interval` internal steps between two output points
@@ -230,18 +233,20 @@ the species-index mapping so plots can label `S{i}`.
 
 ### 5.2 Oscillation mode
 
-Simulate on `[0, osc_t_end]` with `osc_n_points` points (defaults 150 and 2048; the FFT
-pads to a power of two). For each floating species, compute
-`F = rho * harm * sus * amp` in [0,1], exactly as in `uOscillationObjective.pas`:
+Simulate on `[0, osc_t_end]` with `osc_n_points` points (defaults 150 and 2048). For each
+floating species, compute `F = rho * harm * sus * amp` in [0,1], exactly as in the Python
+reference `analysis/objective_prototype.py` (`score_combined`). The Pascal port differs in the
+harmonic term (B19):
 
 1. Drop the first 40% (transient). If fewer than 16 samples remain, F = 0.
 2. `xr` = raw tail; `xd` = linear-least-squares detrended tail. If `std(xd) < 1e-12`, F = 0.
 3. **rho**: autocorrelation through FFT (Wiener-Khinchin, zero-padded to
    `nextpow2(2m)`), normalised by acf[0]. Find the first lag where acf < 0, then the
    maximum acf at or after it. `rho = max(0, peak)`, `lag = argmax`.
-4. **harm**: Hann-windowed power spectrum (`nextpow2(m)`), with DC and bin 1 zeroed.
-   The fundamental is anchored at the ACF period `f0b = L / lag` bins, snapped to the
-   largest bin within `+/- max(2, round(0.15*f0b))`. Sum the power in harmonics
+4. **harm**: Hann-windowed power spectrum of the exact length m (no padding), with DC
+   and bin 1 zeroed. The fundamental is anchored at the ACF period `f0b = m / lag` bins,
+   snapped to the largest bin in `[floor(f0b) - w0, floor(f0b) + w0]`,
+   `w0 = max(2, round(0.15*f0b))`. Sum the power in harmonics
    k = 1..10 with half-window `max(1, round(0.03*k*f0))`. `harm = min(1, sum/total)`.
    If there is no ACF lag, use the global argmax.
 5. **sus**: `min(std_early, std_late) / max(...)` over the two halves of `xr`
