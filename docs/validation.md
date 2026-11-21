@@ -169,3 +169,20 @@ Decisions:
   is about the throughput of 7.5 native threads (wasm is ~2x slower), so about one
   success every 6-7 s. On a typical 8-thread laptop (6 workers, ~3 native-thread
   equivalents), about one every 15-16 s. Both are within the 15-20 s target.
+
+## M3/M4 - web app and deployment (2026-11-21)
+
+- Published at https://hsauro.github.io/ModelEvolver/ by `.github/workflows/pages.yml`
+  (core tests, `trunk build --release`, deploy). First deployment succeeded; a
+  1-experiment smoke test ran end to end on the live site (Web Worker loads,
+  evolves, result returned).
+- Browser runs on this machine, 7 workers (38% CPU): about 4 successes per minute
+  while experiments are being started (e.g. 11 successes in 3:11 including the
+  drain after Stop).
+- UI cost while running: about 1.4 ms per frame at 14-19 frames/s, i.e. 2-3% of
+  one core; workers are unaffected.
+- Bugs found in browser testing and fixed: workers lost their first message
+  (now a Ready handshake); results with infinite fitness were dropped because JSON
+  cannot encode infinity (worker messages now use postcard); a crashed worker
+  hung its slot (now reported as a failed experiment); a stopped run never
+  reached Finished.

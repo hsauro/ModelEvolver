@@ -329,7 +329,7 @@ impl App {
                 .clicked()
             {
                 self.runner.stop();
-                self.set_status("Stopping: waiting for running experiments to finish");
+                self.set_status("Stopped: no new experiments; waiting for the running ones to finish");
             }
             if ui
                 .add_enabled(!idle, egui::Button::new("Cancel"))
@@ -387,7 +387,7 @@ impl App {
                 RunState::Idle if started == 0 => ("Ready", ui.visuals().weak_text_color()),
                 RunState::Idle => ("Finished", ui.visuals().weak_text_color()),
                 RunState::Running => ("Running", SUCCESS),
-                RunState::Stopping => ("Stopping", WARN),
+                RunState::Stopping => ("Finishing", WARN),
             };
             stat(ui, "Status", state.0.to_string(), Some(state.1));
         });

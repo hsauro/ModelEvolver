@@ -7,7 +7,7 @@ Rust port of the Delphi "OscillatorEvolver". It runs natively and in the browser
 
 **Try it in the browser: https://hsauro.github.io/ModelEvolver/**
 
-Status: milestones M0-M3 done (web app working); M4 (GitHub Pages) in progress. See
+Status: milestones M0-M4 done; the web app is published on GitHub Pages and redeployed on every push to `main`. See
 [docs/SPECIFICATION.md](docs/SPECIFICATION.md) for the plan,
 [docs/validation.md](docs/validation.md) for measured results, and
 [docs/objectpascal_bugs.md](docs/objectpascal_bugs.md) for bugs found in the Pascal version.
