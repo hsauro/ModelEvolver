@@ -14,6 +14,7 @@ use evolver_core::patterns::{PatternError, PatternSet};
 use evolver_core::simulate::Trajectory;
 
 use crate::files::{Files, OpenKind};
+use crate::session::{RunRecord, SessionFile, SessionResult};
 use crate::runner::{RunState, Runner, RunnerEvent, hardware_threads};
 
 pub const ACCENT: Color32 = Color32::from_rgb(0x2b, 0x7b, 0xd9);
@@ -54,6 +55,8 @@ pub struct Prefs {
     pub grid_rows: usize,
     pub grid_all_species: bool,
     pub grid_include_failed: bool,
+    /// Size the grid so every model fits on one page.
+    pub grid_fit_all: bool,
     /// End time of the grid plots (each visible model is re-simulated on 0..this).
     pub grid_t_end: f64,
     /// End time and number of points of the Model tab's time course.
@@ -71,6 +74,7 @@ impl Default for Prefs {
             grid_rows: 3,
             grid_all_species: false,
             grid_include_failed: false,
+            grid_fit_all: false,
             grid_t_end: 100.0,
             model_t_end: 100.0,
             model_points: 1000,
@@ -137,6 +141,13 @@ pub struct App {
     pub unsaved_successes: usize,
     /// True when leaving the page would lose work (read by the beforeunload handler).
     leave_guard: Rc<std::cell::Cell<bool>>,
+    /// One record per run (for sessions and the loaded-session figures).
+    pub runs: Vec<RunRecord>,
+    /// Throughput clock and total time of a loaded session (until a new run starts).
+    pub loaded_times: Option<(f64, f64)>,
+    /// A session waiting for the user to confirm replacing unsaved results.
+    pending_session: Option<(String, SessionFile)>,
+    runner_ctx: egui::Context,
 }
 
 impl App {
@@ -180,6 +191,10 @@ impl App {
             show_about: false,
             unsaved_successes: 0,
             leave_guard: Rc::new(std::cell::Cell::new(false)),
+            runs: Vec::new(),
+            loaded_times: None,
+            pending_session: None,
+            runner_ctx: cc.egui_ctx.clone(),
         };
         install_leave_warning(app.leave_guard.clone());
         app.revalidate();
@@ -220,6 +235,18 @@ impl App {
         self.last_success = None;
         self.progress_selected = None;
         self.runner.start(self.cfg.clone(), self.target.clone(), seed, self.workers());
+        self.loaded_times = None;
+        self.runs.push(RunRecord {
+            run: self.run_no,
+            settings: self.cfg.clone(),
+            target: self.target.clone(),
+            base_seed: seed,
+            workers: self.workers(),
+            active_secs: 0.0,
+            elapsed_secs: 0.0,
+            experiments: 0,
+            successes: 0,
+        });
         self.tab = Tab::Progress;
         self.set_status(format!("Run {} started, seed {seed}, {} workers", self.run_no, self.workers()));
     }
@@ -308,6 +335,16 @@ impl App {
                         format!("Imported {name} ({} lines ignored: {})", warnings.len(), warnings.join("; "))
                     });
                 }
+                OpenKind::Session => match SessionFile::from_json(&text) {
+                    Ok(file) => {
+                        if self.unsaved_successes > 0 {
+                            self.pending_session = Some((name.clone(), file));
+                        } else {
+                            self.apply_session(&name, file);
+                        }
+                    }
+                    Err(e) => self.set_status(format!("{name}: {e}")),
+                },
                 OpenKind::SettingsJson => match evolver_core::objective::SharedConfig::from_json(&text) {
                     Ok(shared) => {
                         // Keep this machine's CPU choices; take everything else from the file.
@@ -379,8 +416,10 @@ impl App {
     }
 
     fn stats_bar(&mut self, ui: &mut egui::Ui) {
-        let elapsed = self.runner.elapsed_secs();
-        let active = self.runner.active_secs();
+        let (active, elapsed) = match self.loaded_times {
+            Some(t) if self.runner.started_at.is_none() => t,
+            _ => (self.runner.active_secs(), self.runner.elapsed_secs()),
+        };
         let rate = if active > 0.0 { f64::from(self.run_successes) / active * 60.0 } else { 0.0 };
         let (started, total) = self.runner.counts();
         let running = self.runner.live.len();
@@ -394,6 +433,7 @@ impl App {
             let since = self.last_success.map_or("-".into(), |t| format!("{:.0} s ago", t.elapsed().as_secs_f64()));
             stat(ui, "Last success", since, None);
             let done = match total {
+                _ if started == 0 && self.loaded_times.is_some() => self.run_finished.to_string(),
                 _ if started == 0 => "-".to_string(),
                 Some(t) => format!("{} / {t}", self.run_finished),
                 None => format!("{} (continuous)", self.run_finished),
@@ -404,6 +444,9 @@ impl App {
             // Unambiguous status: a batch completing its last experiments is
             // still "Running (n left)"; after Stop it is "Stopping (n left)".
             let (status, color) = match self.runner.state {
+                RunState::Idle if started == 0 && self.loaded_times.is_some() => {
+                    ("Loaded session".to_string(), ui.visuals().weak_text_color())
+                }
                 RunState::Idle if started == 0 => ("Ready".to_string(), ui.visuals().weak_text_color()),
                 RunState::Idle => ("Finished".to_string(), ui.visuals().weak_text_color()),
                 RunState::Running => ("Running".to_string(), SUCCESS),
@@ -565,6 +608,104 @@ pub fn format_seconds(secs: f64) -> String {
 }
 
 /// A clock-style duration, "m:ss" or "h:mm:ss".
+impl App {
+    pub fn save_session(&mut self) {
+        let used: std::collections::BTreeSet<u32> = self.results.iter().map(|e| e.run).collect();
+        let runs: Vec<RunRecord> = self.runs.iter().filter(|r| used.contains(&r.run)).cloned().collect();
+        let results: Vec<SessionResult> =
+            self.results.iter().map(|e| SessionResult { run: e.run, secs: e.secs, result: e.r.clone() }).collect();
+        let file = SessionFile::new(runs, results);
+        if let Some(msg) = self.files.save_text("modelevolver-session.json", &file.to_json()) {
+            self.unsaved_successes = 0;
+            self.set_status(msg);
+        }
+    }
+
+    pub fn load_session(&mut self) {
+        self.files.open(OpenKind::Session, "Load a ModelEvolver session", &["json"]);
+    }
+
+    fn apply_session(&mut self, name: &str, file: SessionFile) {
+        let rc: std::collections::HashMap<u32, (Rc<EvolverConfig>, Rc<Target>)> =
+            file.runs.iter().map(|r| (r.run, (Rc::new(r.settings.clone()), Rc::new(r.target.clone())))).collect();
+        self.results = file
+            .results
+            .into_iter()
+            .filter_map(|s| {
+                let (cfg, target) = rc.get(&s.run)?.clone();
+                Some(ResultEntry { r: s.result, cfg, target, run: s.run, secs: s.secs })
+            })
+            .collect();
+        self.run_no = file.runs.iter().map(|r| r.run).max().unwrap_or(0);
+        let active: f64 = file.runs.iter().map(|r| r.active_secs).sum();
+        let elapsed: f64 = file.runs.iter().map(|r| r.elapsed_secs).sum();
+        self.runs = file.runs;
+        self.loaded_times = Some((active, elapsed));
+        self.run_finished = self.results.len() as u32;
+        self.run_successes = self.results.iter().filter(|e| e.r.viable).count() as u32;
+        self.run_failed = 0;
+        self.last_success = None;
+        self.unsaved_successes = 0;
+        self.selection = None;
+        self.results_selected = None;
+        self.model.cache = None;
+        self.grid_cache.clear();
+        self.grid_page = 0;
+        self.runner = Runner::new(self.runner_ctx.clone());
+        self.tab = Tab::Grid;
+        self.set_status(format!(
+            "Loaded session {name}: {} successes of {} experiments ({})",
+            self.run_successes,
+            self.run_finished,
+            file.created_by
+        ));
+    }
+
+    /// Ask before a loaded session replaces results that were never saved.
+    fn session_confirm(&mut self, ctx: &egui::Context) {
+        let Some((name, _)) = &self.pending_session else { return };
+        let name = name.clone();
+        let mut choice = None;
+        egui::Modal::new(egui::Id::unique("session_confirm")).show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.label(RichText::new("Replace the current results?").size(17.0).family(bold()));
+            ui.add_space(6.0);
+            ui.label(format!(
+                "Loading {name} replaces the {} current results, {} of them successes not yet saved.",
+                self.results.len(),
+                self.unsaved_successes
+            ));
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button("Save the current session first...").clicked() {
+                    choice = Some(0);
+                }
+                if ui.button("Replace").clicked() {
+                    choice = Some(1);
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(2);
+                }
+            });
+        });
+        match choice {
+            Some(0) => {
+                self.save_session();
+                if let Some((name, file)) = self.pending_session.take() {
+                    self.apply_session(&name, file);
+                }
+            }
+            Some(1) => {
+                if let Some((name, file)) = self.pending_session.take() {
+                    self.apply_session(&name, file);
+                }
+            }
+            Some(2) => self.pending_session = None,
+            _ => {}
+        }
+    }
+}
+
 /// In the browser, ask before the page is reloaded or closed while `guard`
 /// is set (results would be lost). Does nothing on the desktop.
 fn install_leave_warning(guard: Rc<std::cell::Cell<bool>>) {
@@ -661,6 +802,15 @@ impl eframe::App for App {
         self.handle_runner();
         self.handle_files();
         self.leave_guard.set(!self.is_idle() || self.unsaved_successes > 0);
+        if self.runner.started_at.is_some()
+            && let Some(rec) = self.runs.iter_mut().find(|r| r.run == self.run_no)
+        {
+            rec.active_secs = self.runner.active_secs();
+            rec.elapsed_secs = self.runner.elapsed_secs();
+            rec.experiments = self.run_finished;
+            rec.successes = self.run_successes;
+        }
+        self.session_confirm(ui.ctx());
         if !self.is_idle() {
             // Keep the elapsed time and "last success" counters moving.
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));

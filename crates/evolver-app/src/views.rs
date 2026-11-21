@@ -235,6 +235,23 @@ impl App {
     }
 
     pub fn results_tab(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(self.is_idle(), egui::Button::new("Load session..."))
+                .on_hover_text("Open a saved session: its results, grid and models, without running anything")
+                .clicked()
+            {
+                self.load_session();
+            }
+            if ui
+                .add_enabled(!self.results.is_empty(), egui::Button::new("Save session..."))
+                .on_hover_text("Save every result and each run's settings, to reopen later (e.g. for demos)")
+                .clicked()
+            {
+                self.save_session();
+            }
+        });
+        ui.separator();
         if self.results.is_empty() {
             ui.add_space(20.0);
             ui.vertical_centered(|ui| ui.label(RichText::new("No finished experiments yet.").size(16.0).weak()));
@@ -406,10 +423,14 @@ impl App {
                 self.grid_cache.clear();
             }
             ui.separator();
-            ui.label("Columns");
-            ui.add(egui::Slider::new(&mut self.prefs.grid_cols, 1..=8));
-            ui.label("Rows per page");
-            ui.add(egui::Slider::new(&mut self.prefs.grid_rows, 1..=8));
+            ui.checkbox(&mut self.prefs.grid_fit_all, "Fit all on one page")
+                .on_hover_text("Size the grid so every model is visible without scrolling");
+            ui.add_enabled_ui(!self.prefs.grid_fit_all, |ui| {
+                ui.label("Columns");
+                ui.add(egui::DragValue::new(&mut self.prefs.grid_cols).range(1..=20));
+                ui.label("Rows per page");
+                ui.add(egui::DragValue::new(&mut self.prefs.grid_rows).range(1..=20));
+            });
             ui.checkbox(&mut self.prefs.grid_all_species, "All species")
                 .on_hover_text("Show every floating species instead of only the best-scoring one");
             ui.checkbox(&mut self.prefs.grid_include_failed, "Include non-successes");
@@ -419,7 +440,26 @@ impl App {
             ui.vertical_centered(|ui| ui.label(RichText::new("Successful models will appear here.").size(16.0).weak()));
             return;
         }
-        let per_page = self.prefs.grid_cols * self.prefs.grid_rows;
+        let spacing = 6.0;
+        let (cols, grid_rows) = if self.prefs.grid_fit_all {
+            // Choose the column count that gives the largest cells (aspect about 3:2).
+            let n = rows.len();
+            let (w, h) = (ui.available_width(), (ui.available_height() - 40.0).max(100.0));
+            let mut best = (1, n, 0.0f32);
+            for c in 1..=n.min(40) {
+                let r = n.div_ceil(c);
+                let cw = (w - spacing * (c as f32 - 1.0)) / c as f32;
+                let ch = (h - spacing * (r as f32 - 1.0)) / r as f32;
+                let size = cw.min(ch * 1.5);
+                if size > best.2 {
+                    best = (c, r, size);
+                }
+            }
+            (best.0, best.1)
+        } else {
+            (self.prefs.grid_cols, self.prefs.grid_rows)
+        };
+        let per_page = cols * grid_rows;
         let pages = rows.len().div_ceil(per_page);
         self.grid_page = self.grid_page.min(pages - 1);
         ui.horizontal(|ui| {
@@ -434,10 +474,16 @@ impl App {
         });
         ui.add_space(4.0);
 
-        let cols = self.prefs.grid_cols;
-        let spacing = 8.0;
         let cell_w = (ui.available_width() - spacing * (cols as f32 - 1.0)) / cols as f32;
-        let cell_h = ((ui.available_height() - 40.0) / self.prefs.grid_rows as f32 - 36.0).clamp(80.0, cell_w * 0.75);
+        let row_h = (ui.available_height() - spacing * (grid_rows as f32 - 1.0)) / grid_rows as f32;
+        // Small cells drop the title line (the tooltip still names the model).
+        let compact = row_h < 90.0 || cell_w < 150.0;
+        let title_h = if compact { 0.0 } else { 26.0 };
+        let cell_h = if self.prefs.grid_fit_all {
+            (row_h - title_h - 14.0).max(24.0)
+        } else {
+            (row_h - title_h - 14.0).clamp(60.0, cell_w * 0.75)
+        };
         let page: Vec<usize> = rows.iter().skip(self.grid_page * per_page).take(per_page).copied().collect();
         let mut open = None;
         // Simulate at most a few new grid plots per frame so the UI stays responsive.
@@ -449,16 +495,18 @@ impl App {
                     for &i in chunk {
                         let e = &self.results[i];
                         let mut continue_cell = false;
-                        ui.allocate_ui(egui::vec2(cell_w, cell_h + 32.0), |ui| {
-                            egui::Frame::group(ui.style()).inner_margin(4).show(ui, |ui| {
-                                ui.set_width(cell_w - 10.0);
+                        ui.allocate_ui(egui::vec2(cell_w, cell_h + title_h + 12.0), |ui| {
+                            egui::Frame::group(ui.style()).inner_margin(if compact { 2 } else { 4 }).show(ui, |ui| {
+                                ui.set_width(cell_w - if compact { 6.0 } else { 10.0 });
                                 ui.vertical(|ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(RichText::new(format!("#{}.{}", e.run, e.r.id)).strong());
-                                    let c = if e.r.viable { SUCCESS } else { WARN };
-                                    ui.label(RichText::new(fmt_fit(e.r.fitness)).color(c));
-                                    ui.label(RichText::new(format!("{} rxn", e.r.reduced.reactions.len())).weak());
-                                });
+                                if !compact {
+                                    ui.horizontal(|ui| {
+                                        ui.label(RichText::new(format!("#{}.{}", e.run, e.r.id)).strong());
+                                        let c = if e.r.viable { SUCCESS } else { WARN };
+                                        ui.label(RichText::new(fmt_fit(e.r.fitness)).color(c));
+                                        ui.label(RichText::new(format!("{} rxn", e.r.reduced.reactions.len())).weak());
+                                    });
+                                }
                                 let key = (e.run, e.r.id, self.prefs.grid_t_end.to_bits());
                                 if !self.grid_cache.contains_key(&key) && budget > 0 {
                                     budget -= 1;
@@ -481,7 +529,7 @@ impl App {
                                     let only = (!self.prefs.grid_all_species).then_some(e.r.best_node);
                                     let resp = Plot::new(("grid", e.run, e.r.id))
                                         .height(cell_h)
-                                        .show_axes([false, true])
+                                        .show_axes([false, !compact])
                                         .allow_drag(false)
                                         .allow_zoom(false)
                                         .allow_scroll(false)
@@ -498,7 +546,13 @@ impl App {
                                     if resp.clicked() {
                                         open = Some(i);
                                     }
-                                    resp.on_hover_text("Open this model");
+                                    resp.on_hover_text(format!(
+                                        "#{}.{}  fitness {}  {} reactions - click to open",
+                                        e.run,
+                                        e.r.id,
+                                        fmt_fit(e.r.fitness),
+                                        e.r.reduced.reactions.len()
+                                    ));
                                 } else {
                                     ui.label("(no trajectory)");
                                 }

@@ -5,6 +5,7 @@
 mod app;
 mod files;
 mod runner;
+mod session;
 mod settings;
 mod views;
 mod zipfile;

@@ -53,6 +53,11 @@ or SBML Level 3 Version 2 (*Save SBML...*). In **Results**, *Save all successes
 (zip)...* saves every success as both Antimony (.txt) and SBML (.xml) in one zip
 file, and *Save summary (CSV)...* saves a table of all experiments.
 
+Sessions (for demos): in **Results**, *Save session...* writes every result and
+each run's settings to one file; *Load session...* reopens it later (Results, Grid and
+Model are restored, and the top bar shows the session's successes and run time),
+without running anything. The Grid's *Fit all on one page* shows every model at once.
+
 Sharing a setup: **Save configuration...** (top of the Settings panel) writes one
 JSON file with every setting and the target time course. Anyone can open it with
 **Load configuration...** in the app, or pass it to the command-line runner with

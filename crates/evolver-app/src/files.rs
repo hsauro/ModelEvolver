@@ -11,6 +11,7 @@ pub enum OpenKind {
     Patterns,
     PascalIni,
     SettingsJson,
+    Session,
 }
 
 /// An opened file: what it was opened for, its name, and its text (or an error).
