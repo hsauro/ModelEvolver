@@ -159,14 +159,27 @@ impl App {
             ObjectiveKind::Oscillation => (c.osc_stop_threshold, c.osc_viable_threshold),
             ObjectiveKind::TimeCourse => (c.ssd_stop_threshold, c.ssd_viable_threshold),
         });
+        // The give-up threshold applies to the oscillation objective only.
+        let give_up = self
+            .run_settings()
+            .filter(|(c, _)| c.objective == ObjectiveKind::Oscillation && c.abandon_generation > 0)
+            .map(|(c, _)| (c.abandon_threshold, c.abandon_generation));
         let selected = self.progress_selected;
         Plot::new("live_hist")
             .legend(Legend::default())
             .x_axis_label("generation")
             .y_axis_label(if log { "log10 best fitness" } else { "best fitness" })
             .show(ui, |plot| {
-                plot.hline(HLine::new("viable", tf(viable)).color(SUCCESS).width(1.0));
-                plot.hline(HLine::new("converged", tf(stop)).color(ACCENT).width(1.0));
+                plot.hline(HLine::new("viable", tf(viable)).color(SUCCESS).width(2.5));
+                plot.hline(HLine::new("converged", tf(stop)).color(ACCENT).width(2.5));
+                if let Some((t, g)) = give_up {
+                    plot.hline(
+                        HLine::new(format!("give up above (at gen {g})"), tf(t))
+                            .color(WARN)
+                            .width(2.5)
+                            .style(egui_plot::LineStyle::dashed_loose()),
+                    );
+                }
                 for l in self.runner.live.values() {
                     let pts: PlotPoints = l.history.iter().map(|[g, f]| [*g, tf(*f)]).collect();
                     let sel = selected == Some(l.id);
@@ -247,13 +260,13 @@ impl App {
                 }
             }
             if ui
-                .add_enabled(n_viable > 0, egui::Button::new("Save all successes..."))
-                .on_hover_text("Write every successful model as an Antimony text file")
+                .add_enabled(n_viable > 0, egui::Button::new("Save all successes (zip)..."))
+                .on_hover_text("One zip file with every successful model as an Antimony text file")
                 .clicked()
             {
                 let files: Vec<(String, String)> =
                     self.results.iter().filter(|e| e.r.viable).map(|e| (Self::export_name(e), e.r.antimony.clone())).collect();
-                if let Some(msg) = self.files.save_many("modelevolver-models.txt", &files) {
+                if let Some(msg) = self.files.save_zip("modelevolver-models.zip", &files) {
                     self.set_status(msg);
                 }
             }

@@ -7,6 +7,7 @@ mod files;
 mod runner;
 mod settings;
 mod views;
+mod zipfile;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {

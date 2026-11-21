@@ -130,6 +130,7 @@ pub struct App {
     /// UI cost: smoothed CPU time per frame (ms), and frames in the last second.
     ui_ms: f32,
     frames: Vec<Instant>,
+    pub show_about: bool,
 }
 
 impl App {
@@ -169,6 +170,7 @@ impl App {
             grid_cache: std::collections::HashMap::new(),
             ui_ms: 0.0,
             frames: Vec::new(),
+            show_about: false,
         };
         app.revalidate();
         app
@@ -351,6 +353,9 @@ impl App {
             ui.label(RichText::new(format!("{} of {} threads", self.workers(), self.cpu_threads)).weak());
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("About").clicked() {
+                    self.show_about = true;
+                }
                 let label = if self.prefs.dark { "Light" } else { "Dark" };
                 if ui.small_button(label).on_hover_text("Switch colour theme").clicked() {
                     self.prefs.dark = !self.prefs.dark;
@@ -421,6 +426,45 @@ impl App {
                 }
             });
         });
+    }
+}
+
+pub const FUNDING: &str = "This project has been funded in whole or in part with Federal funds from the Advanced Research Projects Agency for Health (ARPA-H), Department of Health and Human Services, under the Critical Illness Immunological Reprogramming and Control Point Learning Engine (CIRCLE) program. The views and conclusions contained in this document are those of the authors and should not be interpreted as representing the official policies, either expressed or implied, of the U.S. Government.";
+
+impl App {
+    fn about_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.show_about;
+        egui::Window::new("About ModelEvolver")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(520.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(RichText::new("ModelEvolver").size(22.0).strong().color(ACCENT));
+                ui.label(format!("Version {}", evolver_core::export::VERSION));
+                ui.add_space(6.0);
+                ui.label(
+                    "Evolves mass-action chemical reaction networks with a genetic algorithm, to find networks \
+                     that oscillate or that follow a target time course. A Rust port of the Object Pascal \
+                     OscillatorEvolver.",
+                );
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Source code:");
+                    ui.hyperlink("https://github.com/hsauro/ModelEvolver");
+                });
+                ui.add_space(6.0);
+                ui.label(RichText::new("Built with").strong());
+                ui.label(
+                    "diffsol (adaptive BDF ODE solver), egui / eframe (user interface), egui_plot, rustfft, \
+                     and the antimony crate (Antimony model checking).",
+                );
+                ui.add_space(8.0);
+                ui.label(RichText::new("Funding").strong());
+                ui.label(FUNDING);
+            });
+        self.show_about = open;
     }
 }
 
@@ -499,6 +543,7 @@ impl eframe::App for App {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
         }
 
+        self.about_window(ui.ctx());
         egui::Panel::top("top").show(ui, |ui| {
             ui.add_space(4.0);
             self.top_bar(ui);

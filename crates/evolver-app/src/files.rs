@@ -73,41 +73,42 @@ impl Files {
         }
     }
 
-    /// Save several text files: into a chosen folder on the desktop, as one
-    /// combined download in the browser.
-    pub fn save_many(&self, combined_name: &str, files: &[(String, String)]) -> Option<String> {
+    /// Save several text files as one ZIP archive.
+    pub fn save_zip(&self, suggested: &str, files: &[(String, String)]) -> Option<String> {
+        let bytes = crate::zipfile::zip_store(files);
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let _ = combined_name;
-            let dir = rfd::FileDialog::new().set_title("Choose a folder for the models").pick_folder()?;
-            let errors = files.iter().filter(|(name, content)| std::fs::write(dir.join(name), content).is_err()).count();
-            Some(if errors == 0 {
-                format!("Saved {} models to {}", files.len(), dir.display())
-            } else {
-                format!("Saved {} of {} models to {}", files.len() - errors, files.len(), dir.display())
+            let path = rfd::FileDialog::new().set_file_name(suggested).add_filter("zip", &["zip"]).save_file()?;
+            Some(match std::fs::write(&path, &bytes) {
+                Ok(()) => format!("Saved {} models to {}", files.len(), path.display()),
+                Err(e) => format!("Could not save {}: {e}", path.display()),
             })
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let mut all = String::new();
-            for (name, content) in files {
-                all.push_str(&format!("// ===== {name} =====\n{content}\n\n"));
-            }
-            self.save_text(combined_name, &all)
+            Some(match download_bytes(suggested, &bytes, "application/zip") {
+                Ok(()) => format!("Downloaded {suggested} ({} models)", files.len()),
+                Err(e) => format!("Download failed: {e}"),
+            })
         }
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 fn download(name: &str, content: &str) -> Result<(), String> {
+    download_bytes(name, content.as_bytes(), "text/plain")
+}
+
+#[cfg(target_arch = "wasm32")]
+fn download_bytes(name: &str, bytes: &[u8], mime: &str) -> Result<(), String> {
     use wasm_bindgen::JsCast;
     let err = |e: wasm_bindgen::JsValue| format!("{e:?}");
     let window = web_sys::window().ok_or("no window")?;
     let document = window.document().ok_or("no document")?;
-    let parts = js_sys::Array::of1(&wasm_bindgen::JsValue::from_str(content));
+    let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));
     let props = web_sys::BlobPropertyBag::new();
-    props.set_type("text/plain");
-    let blob = web_sys::Blob::new_with_str_sequence_and_options(&parts, &props).map_err(err)?;
+    props.set_type(mime);
+    let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &props).map_err(err)?;
     let url = web_sys::Url::create_object_url_with_blob(&blob).map_err(err)?;
     let a: web_sys::HtmlAnchorElement =
         document.create_element("a").map_err(err)?.dyn_into().map_err(|_| "not an anchor".to_string())?;
