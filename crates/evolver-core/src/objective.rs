@@ -133,8 +133,12 @@ pub fn evaluate(net: &Network, cfg: &EvolverConfig, ctx: &RunContext, window: Wi
     }
     let model = net.compile(&ctx.init);
     let trajectory = simulate(&model, &opts)?;
+    // Drift is judged on the long confirmation window only (final check and
+    // model reduction). Applied during evolution it rejected too many networks
+    // still in a slow start-up phase (successes/min fell from 10 to 2).
     if cfg.objective == ObjectiveKind::Oscillation
         && cfg.reject_drift
+        && window == Window::Confirm
         && let Some(state) = drifting_species(&trajectory, cfg.drift_tolerance)
     {
         return Err(SimError::Drift { state });

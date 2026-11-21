@@ -431,13 +431,12 @@ impl Experiment {
         let evolved_fitness = self.best_fitness();
 
         // Long-window confirmation (oscillation): rejects slow-damping oscillators.
-        let confirm = cfg.objective == ObjectiveKind::Oscillation && cfg.osc_confirm_t_end > 0.0;
-        let base_eval = if confirm {
-            self.evaluations += 1;
-            evaluate(&best, &cfg, &ctx, Window::Confirm).ok()
-        } else {
-            evaluate(&best, &cfg, &ctx, Window::Evolve).ok()
-        };
+        // Oscillation: the final check always uses the Confirm window (the same as
+        // the evolution window when confirmation is off), which also applies the
+        // drift check.
+        let window = if cfg.objective == ObjectiveKind::Oscillation { Window::Confirm } else { Window::Evolve };
+        self.evaluations += 1;
+        let base_eval = evaluate(&best, &cfg, &ctx, window).ok();
         let fitness = base_eval.as_ref().map_or(f64::INFINITY, |e| e.fitness);
         let threshold = match cfg.objective {
             ObjectiveKind::Oscillation => cfg.osc_viable_threshold,

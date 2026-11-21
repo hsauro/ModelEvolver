@@ -198,3 +198,25 @@ Checked with 8 threads, seed 5, 16 experiments (max 300 generations):
   combined rows are identical to the single run.
 - `--sbml` stores SBML for every success in models.jsonl; `--model-files` writes
   .txt/.xml per model; an existing run folder is never overwritten (use --resume).
+
+## Drift check: species that grow without bound (2026-11-21)
+
+A network can oscillate in one species while another rises slowly towards
+infinity (below the 1000 runaway cap within the window). `drifting_species`
+flags a species whose mean, after the transient, rises over three equal blocks by
+more than 10% without slowing down.
+
+- Pascal corpus (439 simulated, t = 0..300): 27 flagged. Four checked in Tellurium to
+  t = 2000: three still climbing steadily (about 3x between t = 400 and t = 2000); the
+  fourth is read differently by Tellurium and the importer (inconclusive).
+- Throughput, 8 cores, 5 min, seed 202, give-up rule on (baseline 10.0 successes/min):
+
+| Drift check applied | Experiments | Successes | Successes/min |
+|---|---|---|---|
+| During evolution and at the end | 130 | 15 | 2.1 |
+| Only on the final confirmation window (and reduction) | 209 | 49 | 9.5 |
+
+  Applied during evolution, the 150-unit window mistook networks still in a slow
+  start-up phase for drift and starved the search. It is therefore applied only to the
+  300-unit confirmation run and to model reduction: drifting models never count as
+  successes, at a cost of about 5% in throughput.
