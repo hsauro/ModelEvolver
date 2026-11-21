@@ -61,6 +61,8 @@ pub struct Runner {
     pub target_workers: usize,
     pub started_at: Option<Instant>,
     pub ended_at: Option<Instant>,
+    /// When Stop was pressed (or the batch ran out of experiments to start).
+    pub stopped_at: Option<Instant>,
     pub base_seed: u32,
 }
 
@@ -77,6 +79,7 @@ impl Runner {
             target_workers: 1,
             started_at: None,
             ended_at: None,
+            stopped_at: None,
             base_seed: 0,
         }
     }
@@ -90,6 +93,7 @@ impl Runner {
         self.state = RunState::Running;
         self.started_at = Some(Instant::now());
         self.ended_at = None;
+        self.stopped_at = None;
         self.live.clear();
         self.dispatch();
     }
@@ -98,6 +102,7 @@ impl Runner {
     pub fn stop(&mut self) {
         if self.state == RunState::Running {
             self.state = RunState::Stopping;
+            self.stopped_at = Some(Instant::now());
             self.check_done();
         }
     }
@@ -113,6 +118,17 @@ impl Runner {
 
     pub fn elapsed_secs(&self) -> f64 {
         match (self.started_at, self.ended_at) {
+            (Some(s), Some(e)) => (e - s).as_secs_f64(),
+            (Some(s), None) => s.elapsed().as_secs_f64(),
+            _ => 0.0,
+        }
+    }
+
+    /// Seconds during which new experiments were being started (the clock for
+    /// the successes-per-minute rate; it stops when Stop is pressed, so the
+    /// tail of slow experiments finishing does not drag the rate down).
+    pub fn active_secs(&self) -> f64 {
+        match (self.started_at, self.stopped_at.or(self.ended_at)) {
             (Some(s), Some(e)) => (e - s).as_secs_f64(),
             (Some(s), None) => s.elapsed().as_secs_f64(),
             _ => 0.0,
@@ -136,6 +152,7 @@ impl Runner {
         while self.running() < self.target_workers {
             if self.total.is_some_and(|t| self.next_id >= t) {
                 self.state = RunState::Stopping;
+                self.stopped_at.get_or_insert_with(Instant::now);
                 break;
             }
             let slot = match self.slot_exp.iter().position(|s| s.is_none()) {
@@ -201,6 +218,7 @@ impl Runner {
             }
         }
         self.dispatch();
+        self.check_done();
         out
     }
 

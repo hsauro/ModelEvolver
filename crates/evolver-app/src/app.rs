@@ -54,7 +54,8 @@ pub struct Prefs {
     pub grid_rows: usize,
     pub grid_all_species: bool,
     pub grid_include_failed: bool,
-    pub grid_tail_only: bool,
+    /// End time of the grid plots (each visible model is re-simulated on 0..this).
+    pub grid_t_end: f64,
     pub results_viable_only: bool,
     pub progress_log_y: bool,
 }
@@ -67,7 +68,7 @@ impl Default for Prefs {
             grid_rows: 3,
             grid_all_species: false,
             grid_include_failed: false,
-            grid_tail_only: true,
+            grid_t_end: 100.0,
             results_viable_only: true,
             progress_log_y: true,
         }
@@ -124,6 +125,8 @@ pub struct App {
     pub grid_page: usize,
     pub progress_selected: Option<u32>,
     pub cpu_threads: usize,
+    /// Grid trajectories: (run, experiment, end time bits) -> trajectory.
+    pub grid_cache: std::collections::HashMap<(u32, u32, u64), Option<Trajectory>>,
 }
 
 impl App {
@@ -160,6 +163,7 @@ impl App {
             grid_page: 0,
             progress_selected: None,
             cpu_threads: hardware_threads(),
+            grid_cache: std::collections::HashMap::new(),
         };
         app.revalidate();
         app
@@ -353,12 +357,17 @@ impl App {
 
     fn stats_bar(&mut self, ui: &mut egui::Ui) {
         let elapsed = self.runner.elapsed_secs();
-        let rate = if elapsed > 0.0 { f64::from(self.run_successes) / elapsed * 60.0 } else { 0.0 };
+        let active = self.runner.active_secs();
+        let rate = if active > 0.0 { f64::from(self.run_successes) / active * 60.0 } else { 0.0 };
         let (started, total) = self.runner.counts();
         let running = self.runner.live.len();
         ui.horizontal(|ui| {
             stat(ui, "Successes", self.run_successes.to_string(), Some(SUCCESS));
-            stat(ui, "Successes / min", if elapsed > 5.0 { format!("{rate:.1}") } else { "-".into() }, None);
+            stat(ui, "Successes / min", if active > 5.0 { format!("{rate:.1}") } else { "-".into() }, None)
+                .on_hover_text("Successes per minute while new experiments were being started (the clock stops at Stop)");
+            let per = if self.run_successes > 0 { format_duration(elapsed / f64::from(self.run_successes)) } else { "-".into() };
+            stat(ui, "Time per success", per, None)
+                .on_hover_text("Total real time of the run divided by the number of successes");
             let since = self.last_success.map_or("-".into(), |t| format!("{:.0} s ago", t.elapsed().as_secs_f64()));
             stat(ui, "Last success", since, None);
             let done = match total {
@@ -368,7 +377,7 @@ impl App {
             };
             stat(ui, "Experiments done", done, None);
             stat(ui, "Running", running.to_string(), None);
-            stat(ui, "Elapsed", format_duration(elapsed), None);
+            stat(ui, "Elapsed", format_duration(elapsed), None).on_hover_text("Total real time of the run");
             let state = match self.runner.state {
                 RunState::Idle if started == 0 => ("Ready", ui.visuals().weak_text_color()),
                 RunState::Idle => ("Finished", ui.visuals().weak_text_color()),
@@ -410,7 +419,7 @@ impl App {
     }
 }
 
-fn stat(ui: &mut egui::Ui, label: &str, value: String, color: Option<Color32>) {
+fn stat(ui: &mut egui::Ui, label: &str, value: String, color: Option<Color32>) -> egui::Response {
     egui::Frame::group(ui.style()).inner_margin(egui::Margin::symmetric(10, 4)).show(ui, |ui| {
         ui.vertical(|ui| {
             ui.label(RichText::new(label).small().weak());
@@ -420,7 +429,8 @@ fn stat(ui: &mut egui::Ui, label: &str, value: String, color: Option<Color32>) {
             }
             ui.label(v);
         });
-    });
+    })
+    .response
 }
 
 pub fn format_duration(secs: f64) -> String {
@@ -444,6 +454,15 @@ pub fn apply_theme(ctx: &egui::Context, dark: bool) {
         style.spacing.button_padding = egui::vec2(10.0, 4.0);
         style.spacing.interact_size.y = 24.0;
         style.visuals.selection.bg_fill = ACCENT;
+    });
+    // Darker text in light mode: egui's default greys are hard to read.
+    ctx.style_mut_of(egui::Theme::Light, |style| {
+        let v = &mut style.visuals;
+        v.widgets.noninteractive.fg_stroke.color = Color32::from_gray(30);
+        v.widgets.inactive.fg_stroke.color = Color32::from_gray(25);
+        v.widgets.hovered.fg_stroke.color = Color32::BLACK;
+        v.widgets.active.fg_stroke.color = Color32::BLACK;
+        v.weak_text_color = Some(Color32::from_gray(95));
     });
 }
 

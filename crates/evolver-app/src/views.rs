@@ -385,8 +385,15 @@ impl App {
             ui.checkbox(&mut self.prefs.grid_all_species, "All species")
                 .on_hover_text("Show every floating species instead of only the best-scoring one");
             ui.checkbox(&mut self.prefs.grid_include_failed, "Include non-successes");
-            ui.checkbox(&mut self.prefs.grid_tail_only, "Last quarter only")
-                .on_hover_text("Show only the last 25% of the time span, where the waveform is easier to see");
+            ui.label("Max time");
+            let before = self.prefs.grid_t_end;
+            let r = ui.add(egui::DragValue::new(&mut self.prefs.grid_t_end).range(1.0..=100_000.0).speed(1.0));
+            if self.prefs.grid_t_end != before {
+                self.grid_cache.clear();
+            }
+            r
+                .on_hover_text("End time of the grid plots. Each model is re-simulated on 0..this at 1000 points, \
+                                so short spans stay smooth.");
         });
         if rows.is_empty() {
             ui.add_space(20.0);
@@ -414,12 +421,15 @@ impl App {
         let cell_h = ((ui.available_height() - 40.0) / self.prefs.grid_rows as f32 - 36.0).clamp(80.0, cell_w * 0.75);
         let page: Vec<usize> = rows.iter().skip(self.grid_page * per_page).take(per_page).copied().collect();
         let mut open = None;
+        // Simulate at most a few new grid plots per frame so the UI stays responsive.
+        let mut budget = 4;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             for chunk in page.chunks(cols) {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = spacing;
                     for &i in chunk {
                         let e = &self.results[i];
+                        let mut continue_cell = false;
                         ui.allocate_ui(egui::vec2(cell_w, cell_h + 32.0), |ui| {
                             egui::Frame::group(ui.style()).inner_margin(4).show(ui, |ui| {
                                 ui.set_width(cell_w - 10.0);
@@ -430,8 +440,24 @@ impl App {
                                     ui.label(RichText::new(fmt_fit(e.r.fitness)).color(c));
                                     ui.label(RichText::new(format!("{} rxn", e.r.reduced.reactions.len())).weak());
                                 });
-                                let tail = self.prefs.grid_tail_only;
-                                if let Some(traj) = e.r.display.as_ref().map(|t| if tail { tail_part(t, 0.75) } else { t.clone() }) {
+                                let key = (e.run, e.r.id, self.prefs.grid_t_end.to_bits());
+                                if !self.grid_cache.contains_key(&key) && budget > 0 {
+                                    budget -= 1;
+                                    let (ctx, _) = RunContext::new(&e.cfg, (*e.target).clone());
+                                    let t = simulate(&e.r.reduced.compile(&ctx.init), &e.cfg.sim_options(self.prefs.grid_t_end, GRID_POINTS)).ok();
+                                    self.grid_cache.insert(key, t);
+                                }
+                                let grid_traj = match self.grid_cache.get(&key) {
+                                    Some(t) => t.clone(),
+                                    None => {
+                                        ui.add_sized([cell_w - 10.0, cell_h], egui::Spinner::new());
+                                        ui.ctx().request_repaint();
+                                        continue_cell = true;
+                                        None
+                                    }
+                                };
+                                if continue_cell {
+                                } else if let Some(traj) = grid_traj {
                                     let traj = &traj;
                                     let only = (!self.prefs.grid_all_species).then_some(e.r.best_node);
                                     let resp = Plot::new(("grid", e.run, e.r.id))
@@ -651,11 +677,8 @@ impl App {
     }
 }
 
-/// The part of a trajectory after `frac` of its samples.
-fn tail_part(traj: &Trajectory, frac: f64) -> Trajectory {
-    let start = (traj.t.len() as f64 * frac) as usize;
-    Trajectory { t: traj.t[start..].to_vec(), cols: traj.cols.iter().map(|c| c[start..].to_vec()).collect(), steps: traj.steps }
-}
+/// Samples per grid plot.
+const GRID_POINTS: usize = 1000;
 
 /// Plot bounds covering the whole time span and the y-range after the first
 /// 40% (the transient), so an early spike does not flatten the oscillation.
