@@ -1,6 +1,6 @@
 # ModelEvolver (Rust) - Specification
 
-Status: draft v0.1 (2026-11-21)
+Status: draft v0.2 (2026-11-21)
 Repository: https://github.com/hsauro/ModelEvolver
 Reference implementation: Delphi "OscillatorEvolver" v1.72a
 (`D:\Documents\Embarcadero\Studio\Projects\OscillatorEvolver_Latest_CVODE`).
@@ -26,10 +26,13 @@ The Rust port must:
 - use **diffsol's adaptive BDF solver** for all ODE integration. Explicit methods
   (RK45 and similar) are not permitted anywhere, including plotting;
 - run **many experiments in parallel**: Web Workers in the browser, OS threads on
-  desktop;
+  desktop. Parallelism is a hard requirement, not an option; a single-threaded run is
+  too slow for this project (see section 8.3 for performance targets);
 - turn every command-line option of the Pascal app into a UI control;
 - plot the time course of any successful model, and show a **grid of time courses**
-  for all models produced by a batch.
+  for all models produced by a batch;
+- show any model, and in particular the best model, as **Antimony** text, validated
+  with the in-house `antimony` crate (section 10).
 
 Non-goals (v1): rate laws other than mass action, SBML import/export, a LSODA fallback,
 and bit-exact reproduction of Pascal results (the solvers differ).
@@ -51,6 +54,7 @@ and bit-exact reproduction of Pascal results (the solvers differ).
 | Serialization | `serde`, `serde_json` | config, worker messages, saved sessions |
 | File dialogs | `rfd` (native + web) | |
 | Zip export | `zip` (pure Rust, deflate via `miniz_oxide`) | works on wasm |
+| Antimony | `antimony-rs` (lib name `antimony`), git dependency on the public repo `sys-bio/PathwayDesigner-rs`, pinned to a commit (currently `0732fe1`) | pure Rust, no dependencies, works on wasm. Optional `sbml` feature for SBML export. Not on crates.io yet, so a local `[patch]` path override is used for development |
 | RNG | own xorshift64* port (bit-compatible with `uRandom.pas`) | deterministic per seed, no global state |
 | CI/CD | GitHub Actions: test, clippy, trunk build, deploy to Pages | |
 
@@ -68,14 +72,13 @@ and bit-exact reproduction of Pascal results (the solvers differ).
   (`step()` + `interpolate(t)`), so we keep control over failure detection and step
   limits (4.5).
 
-### 2.2 Technical risk to retire first (Milestone M0)
+### 2.2 Things to verify first (Milestone M0)
 
-diffsol's README does not list wasm as a supported target. The closure/nalgebra path is
-pure Rust and is expected to compile to `wasm32-unknown-unknown`, but this must be proven
-before anything else is built: a Brusselator solved with BDF inside eframe in the
-browser. If it fails, the fallback order is: (a) patch or feature-gate the offending
-dependency upstream; (b) vendor the diffsol subset we need. Switching to an explicit
-solver is **not** an option.
+diffsol has been used successfully in other browser projects in this group, so wasm
+support is expected to work. M0 still confirms it for this exact configuration
+(closure-based BDF + nalgebra inside eframe, running in a Web Worker). M0 also
+measures the cost of one fitness evaluation natively and in wasm, which feeds the
+performance budget in 8.3. Switching to an explicit solver is **not** an option.
 
 ---
 
@@ -285,6 +288,7 @@ This is a port of `uReactionPatterns.pas`, unchanged in behaviour:
 |---|---|---|
 | `seed: u32` (0 = random) | 0 | `-s` |
 | `num_experiments` | 1 | `-e` |
+| `continuous` (run until stopped) | false | new (8.3) |
 | `num_workers` (0 = auto) | 0 | `-nt` |
 | `max_population_size` | 100 | `-mp`, `maxPopulationSize` |
 | `max_generations` | 1600 | `-mg`, `maxNumberOfGenerations` |
@@ -384,7 +388,11 @@ impl Experiment {
     fn is_finished(&self) -> bool;
     fn finish(self) -> ExperimentResult;  // confirmation, reduction, export text
 }
-enum ExperimentEvent { Progress { id, gen, best, pop_len, counts }, Finished { .. } }
+enum ExperimentEvent {
+    Progress { id, gen, best_fitness, pop_len, counts,
+               best_network: Option<Network> },   // sent only when the best changed
+    Finished { .. },
+}
 ```
 
 `RunContext` holds the immutable shared inputs: the SSD target, the compiled pattern
@@ -455,8 +463,40 @@ trait Executor {
   the end.
 - Cancel: `worker.terminate()` on all workers and respawn the pool lazily.
 - No SharedArrayBuffer or COOP/COEP is required.
-- With `num_workers = 0`/single mode (debug), experiments run on the main thread with a
-  small per-frame budget.
+- `num_workers = 0` means "auto" (as above), not single-threaded. A main-thread
+  executor exists only as a developer debug option, hidden behind a build feature; it
+  is not offered to users.
+
+### 8.3 Performance requirements
+
+Target: in oscillation mode with default settings, the app produces a **viable model
+about every 15-20 seconds** on a typical modern desktop (8+ cores), both natively and
+in the browser. M0/M2 measure the real numbers and record them in `docs/validation.md`.
+
+Throughput comes from three sources, in order of importance:
+
+1. **Experiment-level parallelism**: all cores busy. A **continuous mode** (the
+   "Run until stopped" checkbox) keeps dispatching new experiments, with new
+   experiment ids and therefore new seeds, until the user presses Stop, so cores never
+   idle at the end of a fixed batch. A fixed batch (`num_experiments`) remains
+   available.
+2. **Cheap fitness evaluations** (the inner loop: population x generations simulations):
+   - compiled flat RHS and analytic Jacobian (4.3, 4.4); no allocation in the RHS;
+   - reuse of per-worker buffers and solver workspaces across evaluations where
+     diffsol allows it (keyed by state dimension, as the Pascal per-thread CVODE pool
+     was);
+   - early termination: abort a simulation as soon as a failure rule fires (blow-up,
+     step limit) instead of finishing the window;
+   - skip re-evaluating elites whose network has not changed since the last generation
+     (fitness is cached on the individual and cleared on mutation). The Pascal version
+     re-simulates them every generation.
+3. **Build settings**: release profile with `opt-level = 3`, `lto = "fat"`,
+   `codegen-units = 1`, `panic = "abort"` (wasm); `wasm-opt -O3`; wasm `simd128`
+   target feature if it helps (measured, not assumed).
+
+Instrumentation (shown on the Progress tab): evaluations per second per worker,
+viable models per minute, and time since the last viable model. A `criterion`
+benchmark of `evaluate()` on a fixed set of networks guards against regressions.
 
 ---
 
@@ -470,7 +510,7 @@ Layout: left side panel **Settings**, top bar **Run controls**, central area wit
 | Pascal CLI / config | UI control |
 |---|---|
 | `-s seed` | numeric field + "random" checkbox; the last used seed is shown |
-| `-e` | number of experiments (DragValue) |
+| `-e` | number of experiments (DragValue) + "Run until stopped" checkbox |
 | `-nt` | workers (DragValue, 0 = auto) |
 | `-mp`, `-mg` | population size, max generations |
 | `-osc` | objective radio: Time-course match / Sustained oscillation |
@@ -499,19 +539,24 @@ counts of converged / promising / failed (the Pascal `* o .` markers).
 
 A table with one row per running or finished experiment: id, generation, best fitness,
 population size, #species, #reactions, mutation counts, status. A live fitness-history
-plot for the selected experiment, plus a log pane.
+plot for the selected experiment, plus a log pane. A "View current best" button shows
+the selected running experiment's current best network as Antimony (from the latest
+`best_network` in its Progress events) and can plot it.
 
 ### 9.4 Results tab
 
 A sortable table of finished experiments: id, seed, fitness, reduced fitness, #reactions
 (reduced), #floating species, generations, stop reason, viable flag. A filter "viable
-only" is on by default. Selecting a row opens the Model tab. Actions: export the selected
+only" is on by default. Selecting a row opens the Model tab. A "Best model" button opens
+the lowest-fitness model of the whole session. Actions: export the selected
 model, or export all viable models as a zip (`M<session>_<id>_<fitness>.txt`, the same
 naming as Pascal), plus a results CSV.
 
 ### 9.5 Model tab (single time course)
 
-- An Antimony text view (read-only, with copy and download buttons).
+- An Antimony text view of the model (read-only, monospace, with copy and download
+  buttons; download as `.ant`/`.txt`, and as SBML if the `sbml` feature is built in).
+  The view opens on the best model of the session by default.
 - A time-course plot (`egui_plot`) of all floating species, with a legend and per-species
   toggles. The best-scoring node is highlighted.
 - Controls: simulation end time and number of points (default: the objective's window;
@@ -551,6 +596,20 @@ and `r.plot()`, using the objective's T instead of the hard-coded 15.
 The export contains only the species that appear in the reduced network (orphans are
 omitted), and the initial-concentration line uses the effective table (B10).
 
+### 10.1 Use of the `antimony` crate
+
+- `export.rs` builds the Antimony text directly from the `Network` (it is a simple,
+  fixed form, and the header comments are ours).
+- Every generated model is then **checked by parsing it with `antimony::parse`**:
+  no error diagnostics, the same species and reaction counts, the same boundary (`$`)
+  set, and the same rate-constant values. This runs in the unit tests on thousands of
+  random networks, and at runtime (cheap) for every model shown or exported. A failure
+  is shown to the user as a warning next to the text and is treated as a bug.
+- The parsed document is also used for the optional SBML export
+  (`antimony::sbml::write_sbml`, `sbml` feature).
+- The dependency stays in `evolver-core` behind a default-on `antimony` feature, so the
+  core can still be built without it.
+
 ---
 
 ## 11. Testing and validation
@@ -568,6 +627,10 @@ Unit tests (`evolver-core`, run natively and under `wasm-bindgen-test` for the s
 - Failure rules: a blow-up network is flagged bad; a step-limit network is flagged bad,
   without panic.
 - Oscillation score golden values from the Python prototype.
+- Antimony round trip: export -> `antimony::parse` -> compare structure and values
+  (10.1), over random networks.
+- Simulation cross-check: for a few exported models, the trajectory from our compiled
+  RHS matches one rebuilt from the parsed Antimony (guards against export mistakes).
 - GA invariants: population size is exactly `max_population_size` (+ random networks),
   elites are unchanged, rate constants stay >= 0, and the same seed gives the same
   result regardless of worker count.
@@ -587,11 +650,11 @@ CI: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`, and
 
 | # | Deliverable | Exit criterion |
 |---|---|---|
-| M0 | Workspace skeleton; diffsol BDF solves Robertson + Brusselator natively **and** in an eframe page in the browser | spike page works in Chrome/Firefox; record the wasm size |
+| M0 | Workspace skeleton; diffsol BDF solves Robertson + Brusselator natively **and** inside a Web Worker of an eframe page; `antimony` crate builds for wasm | spike works in Chrome/Firefox; evaluation cost native vs wasm recorded; wasm size recorded |
 | M1 | `evolver-core`: rng, network, patterns, compile, simulate, objectives, GA, reduce, export, with unit tests | `cargo test` green; CLI finds oscillators |
 | M2 | `evolver-cli` batch + validation against Pascal | comparison table written up in `docs/validation.md` |
 | M3 | Native egui app: settings, run, progress, results, model plot, grid | full workflow on desktop |
-| M4 | Web: worker pool, trunk config, Pages workflow | public URL runs a 20-experiment batch in parallel |
+| M4 | Web: worker pool, trunk config, Pages workflow | public URL runs in continuous mode on all cores and meets the 8.3 throughput target |
 | M5 | Polish: config import, zip/CSV export, persistence, About, README | release v0.1.0 |
 
 ---
