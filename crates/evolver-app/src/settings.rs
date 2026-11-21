@@ -90,19 +90,36 @@ impl App {
                         self.files.open(OpenKind::PascalIni, "Import a Pascal config.ini", &["ini"]);
                         ui.close();
                     }
-                    if ui.button("Load settings...").clicked() {
-                        self.files.open(OpenKind::SettingsJson, "Load settings", &["json"]);
+                    if ui.button("Load configuration...").clicked() {
+                        self.load_configuration();
                         ui.close();
                     }
-                    if ui.button("Save settings...").clicked() {
-                        let json = serde_json::to_string_pretty(&self.cfg).unwrap_or_default();
-                        if let Some(msg) = self.files.save_text("modelevolver-settings.json", &json) {
-                            self.set_status(msg);
-                        }
+                    if ui.button("Save configuration...").clicked() {
+                        self.save_configuration();
                         ui.close();
                     }
                 });
             });
+        });
+        ui.horizontal(|ui| {
+            let idle = self.is_idle();
+            if ui
+                .add_enabled(idle, egui::Button::new("Load configuration..."))
+                .on_hover_text("Load a configuration file (settings and target time course), e.g. one shared by a colleague")
+                .clicked()
+            {
+                self.load_configuration();
+            }
+            if ui
+                .button("Save configuration...")
+                .on_hover_text(
+                    "Save all settings and the target time course to a file you can share. With a fixed seed \
+                     (untick Random seed) others get exactly the same results.",
+                )
+                .clicked()
+            {
+                self.save_configuration();
+            }
         });
         if !self.is_idle() {
             ui.label(RichText::new("Settings are locked while a run is in progress (CPU usage can still be changed).").weak().small());
@@ -119,6 +136,17 @@ impl App {
                 self.revalidate();
             }
         });
+    }
+
+    pub fn load_configuration(&mut self) {
+        self.files.open(OpenKind::SettingsJson, "Load a ModelEvolver configuration", &["json"]);
+    }
+
+    pub fn save_configuration(&mut self) {
+        let shared = evolver_core::objective::SharedConfig::new(self.cfg.clone(), self.target.clone(), self.target_name.clone());
+        if let Some(msg) = self.files.save_text("modelevolver-configuration.json", &shared.to_json()) {
+            self.set_status(msg);
+        }
     }
 
     fn set_preset(&mut self, mut cfg: EvolverConfig, name: &str) {
@@ -168,14 +196,18 @@ impl App {
 
         section(ui, "Run", true, |ui| {
             ui.horizontal(|ui| {
-                ch |= ui
-                    .add_enabled(!c.continuous, egui::DragValue::new(&mut c.num_experiments).range(1..=100_000))
-                    .on_hover_text("Number of experiments in a batch")
-                    .changed();
+                ch |= ui.radio_value(&mut c.continuous, false, "Run").on_hover_text("Run a fixed number of experiments").changed();
+                let r = ui
+                    .add(egui::DragValue::new(&mut c.num_experiments).range(1..=100_000))
+                    .on_hover_text("Number of experiments in the batch");
+                if r.changed() {
+                    c.continuous = false;
+                    ch = true;
+                }
                 ui.label("experiments");
             });
             ch |= ui
-                .checkbox(&mut c.continuous, "Run until stopped")
+                .radio_value(&mut c.continuous, true, "Run until stopped")
                 .on_hover_text("Keep starting new experiments until you press Stop (best for producing many models)")
                 .changed();
             ui.horizontal(|ui| {

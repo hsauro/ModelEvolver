@@ -169,11 +169,35 @@ pub fn check_antimony(text: &str, net: &Network, init: &[f64]) -> Result<(), Str
     Ok(())
 }
 
+/// Convert exported Antimony text to SBML (Level 3 Version 2) with the
+/// `antimony` crate.
+#[cfg(feature = "antimony")]
+pub fn antimony_to_sbml(text: &str) -> Result<String, String> {
+    let loaded = antimony::parse(text);
+    if loaded.has_errors() {
+        let errs: Vec<String> = loaded.diagnostics.iter().map(|d| d.to_string()).collect();
+        return Err(format!("the Antimony does not parse: {}", errs.join("; ")));
+    }
+    Ok(antimony::sbml::write_sbml(&loaded.document))
+}
+
 #[cfg(all(test, feature = "antimony"))]
 mod tests {
     use super::*;
     use crate::rng::Rng;
     use crate::samples::{PASCAL_INITIAL, pascal_oscillator, random_network};
+
+    #[test]
+    fn sbml_export() {
+        let net = pascal_oscillator();
+        let sbml = antimony_to_sbml(&network_antimony(&net, &PASCAL_INITIAL)).unwrap();
+        assert!(sbml.contains("<sbml"));
+        assert_eq!(sbml.matches("<reaction ").count(), net.reactions.len());
+        assert!(sbml.contains("id=\"k0\""));
+        if let Ok(dir) = std::env::var("SBML_TEST_OUT") {
+            std::fs::write(format!("{dir}/oscillator.xml"), &sbml).unwrap();
+        }
+    }
 
     #[test]
     fn pascal_oscillator_round_trips() {

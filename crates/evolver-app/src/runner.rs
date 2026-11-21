@@ -61,7 +61,7 @@ pub struct Runner {
     pub target_workers: usize,
     pub started_at: Option<Instant>,
     pub ended_at: Option<Instant>,
-    /// When Stop was pressed (or the batch ran out of experiments to start).
+    /// When the user pressed Stop.
     pub stopped_at: Option<Instant>,
     pub base_seed: u32,
 }
@@ -124,9 +124,9 @@ impl Runner {
         }
     }
 
-    /// Seconds during which new experiments were being started (the clock for
-    /// the successes-per-minute rate; it stops when Stop is pressed, so the
-    /// tail of slow experiments finishing does not drag the rate down).
+    /// The clock for the throughput figures: the whole run, except that it
+    /// stops when the user presses Stop (the experiments still finishing after
+    /// an explicit Stop do not drag the figures down).
     pub fn active_secs(&self) -> f64 {
         match (self.started_at, self.stopped_at.or(self.ended_at)) {
             (Some(s), Some(e)) => (e - s).as_secs_f64(),
@@ -151,8 +151,9 @@ impl Runner {
         let Some((cfg, target, seed)) = self.template.clone() else { return };
         while self.running() < self.target_workers {
             if self.total.is_some_and(|t| self.next_id >= t) {
+                // A batch that has started all its experiments keeps its clock
+                // running until they finish: that tail is part of the batch's cost.
                 self.state = RunState::Stopping;
-                self.stopped_at.get_or_insert_with(Instant::now);
                 break;
             }
             let slot = match self.slot_exp.iter().position(|s| s.is_none()) {

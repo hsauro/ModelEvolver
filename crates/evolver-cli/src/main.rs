@@ -17,7 +17,7 @@ evolver-cli - run ModelEvolver experiments headless
 
 Options:
   --preset NAME        osc (default: settings of the Pascal oscillator corpus) or pascal (built-in defaults)
-  --config FILE        load settings from a JSON file (see --dump-config)
+  --config FILE        load a configuration file saved by the app (settings and target)
   --pascal-ini FILE    apply a Pascal config.ini
   --objective NAME     osc or timecourse
   --target FILE        target time course (Pascal objectivefunction.txt format)
@@ -82,7 +82,9 @@ fn parse_args() -> Result<Args, String> {
             }
             "--config" => {
                 let p = next(&mut i)?;
-                cfg = serde_json::from_str(&read(&p)?).map_err(|e| format!("{p}: {e}"))?;
+                let shared = evolver_core::objective::SharedConfig::from_json(&read(&p)?).map_err(|e| format!("{p}: {e}"))?;
+                cfg = shared.settings;
+                target = shared.target;
             }
             "--pascal-ini" => {
                 let p = next(&mut i)?;
@@ -151,7 +153,7 @@ fn main() {
     };
     let mut cfg = args.cfg;
     if args.dump {
-        println!("{}", serde_json::to_string_pretty(&cfg).unwrap_or_default());
+        println!("{}", evolver_core::objective::SharedConfig::new(cfg, args.target.clone(), "target").to_json());
         return;
     }
     if let Err(errors) = cfg.validate() {

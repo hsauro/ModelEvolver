@@ -25,8 +25,8 @@ cores) and on the desktop. It is a Rust port of the Object Pascal
    ```
 2. **Set how much of the computer to use** with the **CPU usage** slider (top bar,
    default 75% of the processor threads). Each worker runs one experiment at a time.
-3. **Choose a batch size** (*experiments*), or tick **Run until stopped** to keep
-   producing models.
+3. Under **Run**, choose **Run N experiments** (a fixed batch) or **Run until
+   stopped** (keep producing models until you press Stop).
 4. Press **Start**.
    - **Stop** starts no new experiments and lets the running ones finish.
    - **Cancel** abandons the running experiments; finished results are kept.
@@ -42,15 +42,24 @@ cores) and on the desktop. It is a Rust port of the Object Pascal
 
 The numbers in the top bar:
 
-- **Successes / min**: successful models per minute while new experiments are
-  being started. This is the main measure of throughput.
-- **Time per success**: total run time divided by the number of successes.
+- **Successes / min**: successful models per minute of run time. This is the main
+  measure of throughput. The clock stops when you press Stop, so experiments still
+  finishing after Stop do not drag the figure down.
+- **Time per success**: the same clock divided by the number of successes
+  (60 / successes per minute). **Elapsed** is the true total time.
 
-Exporting: in **Results**, *Save model...* saves one model as Antimony text,
-*Save all successes (zip)...* saves every success in one zip file, and
-*Save summary (CSV)...* saves a table of all experiments. Settings can be saved,
-loaded, reset to a preset, or imported from a Pascal `config.ini` (**More**, top of
-the Settings panel). Settings are remembered between visits.
+Exporting: the **Model** tab saves the shown model as Antimony (*Save Antimony...*)
+or SBML Level 3 Version 2 (*Save SBML...*). In **Results**, *Save all successes
+(zip)...* saves every success as both Antimony (.txt) and SBML (.xml) in one zip
+file, and *Save summary (CSV)...* saves a table of all experiments.
+
+Sharing a setup: **Save configuration...** (top of the Settings panel) writes one
+JSON file with every setting and the target time course. Anyone can open it with
+**Load configuration...** in the app, or pass it to the command-line runner with
+`--config`. Loading keeps the receiver's own CPU usage. With a fixed seed (untick
+*Random seed*), a shared configuration reproduces exactly the same results.
+Settings can also be reset to a preset or imported from a Pascal `config.ini`
+(**More**). Settings are remembered between visits.
 
 Key settings:
 

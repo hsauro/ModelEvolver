@@ -303,10 +303,17 @@ impl App {
                         format!("Imported {name} ({} lines ignored: {})", warnings.len(), warnings.join("; "))
                     });
                 }
-                OpenKind::SettingsJson => match serde_json::from_str::<EvolverConfig>(&text) {
-                    Ok(c) => {
-                        self.cfg = c;
-                        self.set_status(format!("Loaded settings from {name}"));
+                OpenKind::SettingsJson => match evolver_core::objective::SharedConfig::from_json(&text) {
+                    Ok(shared) => {
+                        // Keep this machine's CPU choices; take everything else from the file.
+                        let (cpu, workers) = (self.cfg.cpu_usage_percent, self.cfg.num_workers);
+                        self.cfg = shared.settings;
+                        self.cfg.cpu_usage_percent = cpu;
+                        self.cfg.num_workers = workers;
+                        self.target = shared.target;
+                        self.target_name = shared.target_name;
+                        let seed = if self.cfg.seed == 0 { "random seed".to_string() } else { format!("seed {}", self.cfg.seed) };
+                        self.set_status(format!("Loaded configuration {name} ({}, {seed})", shared.created_by));
                     }
                     Err(e) => self.set_status(format!("{name}: {e}")),
                 },
@@ -375,10 +382,10 @@ impl App {
         ui.horizontal(|ui| {
             stat(ui, "Successes", self.run_successes.to_string(), Some(SUCCESS));
             stat(ui, "Successes / min", if active > 5.0 { format!("{rate:.1}") } else { "-".into() }, None)
-                .on_hover_text("Successes per minute while new experiments were being started (the clock stops at Stop)");
-            let per = if self.run_successes > 0 { format_seconds(elapsed / f64::from(self.run_successes)) } else { "-".into() };
+                .on_hover_text("Successes per minute of run time (the clock stops when you press Stop)");
+            let per = if self.run_successes > 0 { format_seconds(active / f64::from(self.run_successes)) } else { "-".into() };
             stat(ui, "Time per success", per, None)
-                .on_hover_text("Total real time of the run divided by the number of successes");
+                .on_hover_text("Run time divided by the number of successes (= 60 / successes per minute)");
             let since = self.last_success.map_or("-".into(), |t| format!("{:.0} s ago", t.elapsed().as_secs_f64()));
             stat(ui, "Last success", since, None);
             let done = match total {

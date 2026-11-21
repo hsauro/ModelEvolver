@@ -196,3 +196,101 @@ mod tests {
         assert!(e.fitness > 0.0);
     }
 }
+
+/// A complete, shareable setup: every setting plus the target time course.
+/// Saved as JSON so it can be sent to other people and loaded by the app or
+/// the CLI. With a fixed (non-zero) seed, a shared setup reproduces the same
+/// results exactly.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SharedConfig {
+    /// Always "ModelEvolver configuration"; identifies the file.
+    pub format: String,
+    /// File format version.
+    pub version: u32,
+    /// Program version that wrote the file.
+    pub created_by: String,
+    pub settings: EvolverConfig,
+    pub target: Target,
+    pub target_name: String,
+}
+
+pub const SHARED_CONFIG_FORMAT: &str = "ModelEvolver configuration";
+
+impl SharedConfig {
+    pub fn new(settings: EvolverConfig, target: Target, target_name: impl Into<String>) -> Self {
+        Self {
+            format: SHARED_CONFIG_FORMAT.into(),
+            version: 1,
+            created_by: format!("ModelEvolver {}", env!("CARGO_PKG_VERSION")),
+            settings,
+            target,
+            target_name: target_name.into(),
+        }
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap_or_default()
+    }
+
+    /// Read a configuration file. Also accepts an older settings-only file
+    /// (a bare settings object), which then keeps the default target.
+    pub fn from_json(text: &str) -> Result<Self, String> {
+        if let Ok(c) = serde_json::from_str::<SharedConfig>(text) {
+            if c.format != SHARED_CONFIG_FORMAT {
+                return Err(format!("not a ModelEvolver configuration (format '{}')", c.format));
+            }
+            if c.version > 1 {
+                return Err(format!("configuration version {} is newer than this program supports", c.version));
+            }
+            c.target_is_valid()?;
+            return Ok(c);
+        }
+        match serde_json::from_str::<EvolverConfig>(text) {
+            Ok(settings) if text.contains("max_population_size") => {
+                Ok(SharedConfig::new(settings, Target::default(), "built-in square wave"))
+            }
+            _ => Err("this file is not a ModelEvolver configuration".into()),
+        }
+    }
+
+    fn target_is_valid(&self) -> Result<(), String> {
+        let t = &self.target;
+        if t.values.len() < 2 || t.t_end <= t.t_start || t.values.iter().any(|v| !v.is_finite()) {
+            return Err("the configuration's target time course is invalid".into());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod shared_config_tests {
+    use super::*;
+
+    #[test]
+    fn round_trip() {
+        let mut s = EvolverConfig::oscillator_preset();
+        s.seed = 1234;
+        s.reaction_patterns = "mode: disallow\nA + B -> A".into();
+        let t = Target { t_start: 0.0, t_end: 20.0, values: vec![1.0, 2.0, 3.0] };
+        let c = SharedConfig::new(s, t, "my target");
+        let back = SharedConfig::from_json(&c.to_json()).unwrap();
+        assert_eq!(back, c);
+    }
+
+    #[test]
+    fn accepts_old_settings_only_files() {
+        let old = serde_json::to_string(&EvolverConfig::default()).unwrap();
+        let c = SharedConfig::from_json(&old).unwrap();
+        assert_eq!(c.settings, EvolverConfig::default());
+        assert_eq!(c.target, Target::default());
+    }
+
+    #[test]
+    fn rejects_other_files() {
+        assert!(SharedConfig::from_json("{\"hello\": 1}").is_err());
+        assert!(SharedConfig::from_json("not json").is_err());
+        let mut c = SharedConfig::new(EvolverConfig::default(), Target::default(), "x");
+        c.format = "something else".into();
+        assert!(SharedConfig::from_json(&c.to_json()).is_err());
+    }
+}

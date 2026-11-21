@@ -261,11 +261,17 @@ impl App {
             }
             if ui
                 .add_enabled(n_viable > 0, egui::Button::new("Save all successes (zip)..."))
-                .on_hover_text("One zip file with every successful model as an Antimony text file")
+                .on_hover_text("One zip file with every successful model, as Antimony (.txt) and SBML (.xml)")
                 .clicked()
             {
-                let files: Vec<(String, String)> =
-                    self.results.iter().filter(|e| e.r.viable).map(|e| (Self::export_name(e), e.r.antimony.clone())).collect();
+                let mut files: Vec<(String, String)> = Vec::new();
+                for e in self.results.iter().filter(|e| e.r.viable) {
+                    let name = Self::export_name(e);
+                    if let Ok(sbml) = evolver_core::export::antimony_to_sbml(&e.r.antimony) {
+                        files.push((name.replace(".txt", ".xml"), sbml));
+                    }
+                    files.push((name, e.r.antimony.clone()));
+                }
                 if let Some(msg) = self.files.save_zip("modelevolver-models.zip", &files) {
                     self.set_status(msg);
                 }
@@ -645,6 +651,20 @@ impl App {
                 };
                 if let Some(msg) = self.files.save_text(&name, &text) {
                     self.set_status(msg);
+                }
+            }
+            if ui.button("Save SBML...").on_hover_text("SBML Level 3 Version 2").clicked() {
+                let name = match &result {
+                    Some(r) => format!("model_exp{}_fit{:.4}.xml", r.id, r.fitness),
+                    None => "model.xml".into(),
+                };
+                match evolver_core::export::antimony_to_sbml(&text) {
+                    Ok(sbml) => {
+                        if let Some(msg) = self.files.save_text(&name, &sbml) {
+                            self.set_status(msg);
+                        }
+                    }
+                    Err(e) => self.set_status(format!("SBML export failed: {e}")),
                 }
             }
             if let Some(Selection::Result(cur)) = self.selection {
