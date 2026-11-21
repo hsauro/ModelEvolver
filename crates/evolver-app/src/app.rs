@@ -396,13 +396,16 @@ impl App {
             stat(ui, "Experiments done", done, None);
             stat(ui, "Running", running.to_string(), None);
             stat(ui, "Elapsed", format_duration(elapsed), None).on_hover_text("Total real time of the run");
-            let state = match self.runner.state {
-                RunState::Idle if started == 0 => ("Ready", ui.visuals().weak_text_color()),
-                RunState::Idle => ("Finished", ui.visuals().weak_text_color()),
-                RunState::Running => ("Running", SUCCESS),
-                RunState::Stopping => ("Finishing", WARN),
+            // Unambiguous status: a batch completing its last experiments is
+            // still "Running (n left)"; after Stop it is "Stopping (n left)".
+            let (status, color) = match self.runner.state {
+                RunState::Idle if started == 0 => ("Ready".to_string(), ui.visuals().weak_text_color()),
+                RunState::Idle => ("Finished".to_string(), ui.visuals().weak_text_color()),
+                RunState::Running => ("Running".to_string(), SUCCESS),
+                RunState::Stopping if self.runner.stopped_at.is_some() => (format!("Stopping ({running} left)"), WARN),
+                RunState::Stopping => (format!("Running ({running} left)"), SUCCESS),
             };
-            stat(ui, "Status", state.0.to_string(), Some(state.1));
+            stat(ui, "Status", status, Some(color));
         });
     }
 
