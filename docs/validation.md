@@ -186,3 +186,15 @@ Decisions:
   cannot encode infinity (worker messages now use postcard); a crashed worker
   hung its slot (now reported as a failed experiment); a stopped run never
   reached Finished.
+
+## CLI for large runs (2026-11-21)
+
+Checked with 8 threads, seed 5, 16 experiments (max 300 generations):
+
+- Interrupted after 25 s (8 experiments recorded), then `--resume`: the remaining 8
+  were run; all 16 summary rows (every column except time) and all 5 successful
+  models (Antimony) are identical to an uninterrupted run.
+- Split into `--start 0 -e 8` and `--start 8 -e 8` (two output folders): the
+  combined rows are identical to the single run.
+- `--sbml` stores SBML for every success in models.jsonl; `--model-files` writes
+  .txt/.xml per model; an existing run folder is never overwritten (use --resume).

@@ -6,6 +6,28 @@
 
 const GOLDEN: u64 = 0x9E37_79B9_7F4A_7C15;
 
+/// A fresh base seed from the operating system's random-number generator
+/// (the browser's crypto API on the web), never 0 (0 means "pick one").
+/// Falls back to the clock if the OS source is unavailable.
+pub fn random_base_seed() -> u32 {
+    let seed = getrandom::u32().unwrap_or_else(|_| clock_seed());
+    // Keep it at most 9 digits so it is easy to read and type back in.
+    (seed % 1_000_000_000).max(1)
+}
+
+/// Fallback seed source (std::time is unavailable in the browser, where the
+/// OS source always exists).
+fn clock_seed() -> u32 {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos()) as u32
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        1
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Rng {
     state: u64,
@@ -90,6 +112,14 @@ mod tests {
             let x = r.next_f64();
             assert!((0.0..1.0).contains(&x));
         }
+    }
+
+    #[test]
+    fn random_base_seeds_differ() {
+        let a = random_base_seed();
+        let b = random_base_seed();
+        assert!(a > 0 && b > 0 && a < 1_000_000_000);
+        assert_ne!(a, b, "two OS-random seeds collided (1 in a billion)");
     }
 
     #[test]

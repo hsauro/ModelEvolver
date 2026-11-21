@@ -76,6 +76,35 @@ F = periodicity x harmonic purity x sustained amplitude x minimum amplitude
 (each in 0..1). A model counts as a success below 0.3, after a longer
 confirmation simulation that rejects slowly damping oscillators.
 
+## Large runs: the command-line tool
+
+For thousands of experiments, use `evolver-cli` (same evolution code, no UI).
+Design a setup in the app, **Save configuration...**, then:
+
+```
+evolver-cli --config my-setup.json -e 100000 --out run1 --sbml
+```
+
+- **Output** (folder `run1`): `run.json` (configuration and base seed),
+  `summary.csv` (one line per experiment), `models.jsonl` (one JSON object per
+  successful model, with Antimony and, with `--sbml`, SBML). Add `--model-files` to
+  also write each model as its own `.txt`/`.xml` file in `run1/models`.
+- **Progress**: one status line every 30 s (`--progress SECS`): experiments done,
+  successes, successes per minute and estimated time left. `-v` adds a line per
+  experiment.
+- **Resume after any interruption** (crash, reboot, Ctrl+C): run
+  `evolver-cli --resume --out run1`. Every finished experiment is written to disk at
+  once; only experiments not yet recorded are run, with the saved configuration and
+  seed. Results are identical to an uninterrupted run.
+- **Split across machines**: give each machine the same seed and a different
+  range, e.g. `-s 7 --start 0 -e 50000` and `-s 7 --start 50000 -e 50000`. The
+  combined results equal one run of 100,000.
+- **Seed**: without `-s` (or a fixed seed in the configuration) a new base seed is
+  taken from the operating system's random-number generator and printed.
+- **CPU**: 75% of the hardware threads by default; `-nt N` sets the number of workers.
+
+`evolver-cli --help` lists every option.
+
 ## Documentation
 
 - [docs/SPECIFICATION.md](docs/SPECIFICATION.md): design and requirements

@@ -8,3 +8,4 @@ license.workspace = true
 [dependencies]
 evolver-core = { path = "../evolver-core" }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }

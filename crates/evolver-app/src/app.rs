@@ -211,12 +211,7 @@ impl App {
             self.set_status("Fix the settings marked in red before starting");
             return;
         }
-        let seed = if self.cfg.seed == 0 {
-            let now = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map_or(1, |d| d.as_nanos());
-            ((now as u32) % 1_000_000_000).max(1)
-        } else {
-            self.cfg.seed
-        };
+        let seed = if self.cfg.seed == 0 { evolver_core::rng::random_base_seed() } else { self.cfg.seed };
         self.run_no += 1;
         self.run_cfg = Some((Rc::new(self.cfg.clone()), Rc::new(self.target.clone())));
         self.run_successes = 0;

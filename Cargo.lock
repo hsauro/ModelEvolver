@@ -1318,6 +1318,7 @@ name = "evolver-cli"
 version = "0.1.0"
 dependencies = [
  "evolver-core",
+ "serde",
  "serde_json",
 ]
 
