@@ -56,6 +56,9 @@ pub struct Prefs {
     pub grid_include_failed: bool,
     /// End time of the grid plots (each visible model is re-simulated on 0..this).
     pub grid_t_end: f64,
+    /// End time and number of points of the Model tab's time course.
+    pub model_t_end: f64,
+    pub model_points: usize,
     pub results_viable_only: bool,
     pub progress_log_y: bool,
 }
@@ -69,6 +72,8 @@ impl Default for Prefs {
             grid_all_species: false,
             grid_include_failed: false,
             grid_t_end: 100.0,
+            model_t_end: 100.0,
+            model_points: 1000,
             results_viable_only: true,
             progress_log_y: true,
         }
@@ -87,16 +92,13 @@ pub enum SortCol {
 /// Model tab state.
 pub struct ModelView {
     pub show_reduced: bool,
-    pub custom_window: bool,
-    pub t_end: f64,
-    pub n_points: usize,
     pub hidden: BTreeSet<usize>,
     pub cache: Option<(String, Result<Trajectory, String>)>,
 }
 
 impl Default for ModelView {
     fn default() -> Self {
-        Self { show_reduced: true, custom_window: false, t_end: 300.0, n_points: 1000, hidden: BTreeSet::new(), cache: None }
+        Self { show_reduced: true, hidden: BTreeSet::new(), cache: None }
     }
 }
 

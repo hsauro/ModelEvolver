@@ -685,11 +685,6 @@ impl App {
         });
         ui.separator();
 
-        let default_window = match cfg.objective {
-            ObjectiveKind::Oscillation if cfg.osc_confirm_t_end > 0.0 => cfg.osc_confirm_t_end,
-            ObjectiveKind::Oscillation => cfg.osc_t_end,
-            ObjectiveKind::TimeCourse => target.sim_t_end(),
-        };
         let text_w = (ui.available_width() * 0.38).clamp(280.0, 560.0);
         ui.horizontal_top(|ui| {
             // Antimony text
@@ -707,15 +702,13 @@ impl App {
             ui.vertical(|ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.strong("Time course");
-                    ui.checkbox(&mut self.model.custom_window, "Custom time span");
-                    if self.model.custom_window {
-                        let a = ui.add(egui::DragValue::new(&mut self.model.t_end).range(0.1..=1e6).prefix("end time "));
-                        let b = ui.add(egui::DragValue::new(&mut self.model.n_points).range(10..=100_000).prefix("points "));
-                        if a.changed() || b.changed() {
-                            self.model.cache = None;
-                        }
-                    } else {
-                        ui.label(RichText::new(format!("t = 0..{default_window}")).weak());
+                    ui.separator();
+                    ui.label("Max time").on_hover_text("End time of this plot (separate from the Grid's max time)");
+                    let a = ui.add(egui::DragValue::new(&mut self.prefs.model_t_end).range(0.1..=1e6).speed(1.0));
+                    ui.label("Points").on_hover_text("Number of plotted samples");
+                    let b = ui.add(egui::DragValue::new(&mut self.prefs.model_points).range(10..=100_000).speed(10.0));
+                    if a.changed() || b.changed() {
+                        self.model.cache = None;
                     }
                 });
                 ui.horizontal_wrapped(|ui| {
@@ -733,12 +726,10 @@ impl App {
                     }
                 });
 
-                // Trajectory: the stored display trajectory when possible, else simulate now.
-                let stored = result.as_ref().filter(|_| self.model.show_reduced && !self.model.custom_window).and_then(|r| r.display.clone());
-                let traj: Result<Trajectory, String> = match stored {
-                    Some(t) => Ok(t),
-                    None => {
-                        let (t_end, n) = if self.model.custom_window { (self.model.t_end, self.model.n_points) } else { (default_window, 1000) };
+                // Simulate on 0..max time (cached until the model or the span changes).
+                let traj: Result<Trajectory, String> = {
+                    {
+                        let (t_end, n) = (self.prefs.model_t_end, self.prefs.model_points);
                         let key = format!("{:?}|{}|{}|{t_end}|{n}", self.selection, self.model.show_reduced, net.id);
                         let live = matches!(self.selection, Some(Selection::Live(_)));
                         match &self.model.cache {
