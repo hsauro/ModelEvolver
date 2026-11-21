@@ -127,6 +127,9 @@ pub struct App {
     pub cpu_threads: usize,
     /// Grid trajectories: (run, experiment, end time bits) -> trajectory.
     pub grid_cache: std::collections::HashMap<(u32, u32, u64), Option<Trajectory>>,
+    /// UI cost: smoothed CPU time per frame (ms), and frames in the last second.
+    ui_ms: f32,
+    frames: Vec<Instant>,
 }
 
 impl App {
@@ -164,6 +167,8 @@ impl App {
             progress_selected: None,
             cpu_threads: hardware_threads(),
             grid_cache: std::collections::HashMap::new(),
+            ui_ms: 0.0,
+            frames: Vec::new(),
         };
         app.revalidate();
         app
@@ -467,7 +472,13 @@ pub fn apply_theme(ctx: &egui::Context, dark: bool) {
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        if let Some(cpu) = frame.info().cpu_usage {
+            self.ui_ms = 0.9 * self.ui_ms + 0.1 * cpu * 1000.0;
+        }
+        let now = Instant::now();
+        self.frames.retain(|t| now.duration_since(*t).as_secs_f64() < 1.0);
+        self.frames.push(now);
         self.handle_runner();
         self.handle_files();
         if !self.is_idle() {
@@ -496,6 +507,11 @@ impl eframe::App for App {
                     ui.label(
                         RichText::new(format!("ModelEvolver {} - diffsol BDF", evolver_core::export::VERSION)).weak().small(),
                     );
+                    ui.separator();
+                    ui.label(RichText::new(format!("UI {:.1} ms/frame, {} frames/s", self.ui_ms, self.frames.len())).weak().small())
+                        .on_hover_text(
+                            "Time the page spends drawing. The evolution runs in separate workers and is not slowed by drawing.",
+                        );
                 });
             });
         });
