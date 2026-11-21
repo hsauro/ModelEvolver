@@ -27,9 +27,13 @@ Options:
   -s SEED              base seed (0 or absent = from the clock)
   -mg N                max generations
   -mp N                max population size
-  -nt N                worker threads (default: all hardware threads)
+  -nt N                worker threads (default: 75% of the hardware threads)
   --out DIR            write viable models to DIR (default: results)
   --no-write           do not write model files
+  --history FILE       append one JSON line per experiment (best fitness per generation)
+  --osc-window T N     oscillation evolution window (default 150 2048)
+  --abandon G T        abandon experiments still above fitness T at generation G
+                       (default 100 0.3; G = 0 turns it off)
   --quiet              one line per experiment only
   --dump-config        print the effective settings as JSON and exit
   -h, --help           this help
@@ -42,6 +46,7 @@ struct Args {
     out: Option<PathBuf>,
     quiet: bool,
     dump: bool,
+    history: Option<PathBuf>,
 }
 
 fn read(path: &str) -> Result<String, String> {
@@ -55,6 +60,7 @@ fn parse_args() -> Result<Args, String> {
     let mut duration = None;
     let mut out = Some(PathBuf::from("results"));
     let (mut quiet, mut dump) = (false, false);
+    let mut history = None;
     let mut i = 0;
     let next = |i: &mut usize| -> Result<String, String> {
         *i += 1;
@@ -108,12 +114,21 @@ fn parse_args() -> Result<Args, String> {
             "--out" => out = Some(PathBuf::from(next(&mut i)?)),
             "--no-write" => out = None,
             "--quiet" => quiet = true,
+            "--abandon" => {
+                cfg.abandon_generation = num(next(&mut i)?)? as u32;
+                cfg.abandon_threshold = num(next(&mut i)?)?;
+            }
+            "--history" => history = Some(PathBuf::from(next(&mut i)?)),
+            "--osc-window" => {
+                cfg.osc_t_end = num(next(&mut i)?)?;
+                cfg.osc_n_points = num(next(&mut i)?)? as usize;
+            }
             "--dump-config" => dump = true,
             other => return Err(format!("unknown option '{other}' (try --help)")),
         }
         i += 1;
     }
-    Ok(Args { cfg, target, duration, out, quiet, dump })
+    Ok(Args { cfg, target, duration, out, quiet, dump, history })
 }
 
 /// Seven letters/digits, then '_', then seven more (as the Pascal session ids).
@@ -161,11 +176,7 @@ fn main() {
         std::process::exit(2);
     }
 
-    let threads = if cfg.num_workers > 0 {
-        cfg.num_workers as usize
-    } else {
-        std::thread::available_parallelism().map_or(1, |n| n.get())
-    };
+    let threads = cfg.worker_count(std::thread::available_parallelism().map_or(1, |n| n.get()));
     let total = if cfg.continuous { u32::MAX } else { cfg.num_experiments };
     let threads = threads.min(total as usize).max(1);
     println!(
@@ -210,6 +221,12 @@ fn main() {
 
     let (mut done, mut viable, mut evaluations) = (0u32, 0u32, 0u64);
     let mut viable_times = Vec::new();
+    let mut history_file = args.history.as_ref().map(|p| {
+        std::fs::OpenOptions::new().create(true).append(true).open(p).unwrap_or_else(|e| {
+            eprintln!("error: cannot open {}: {e}", p.display());
+            std::process::exit(2)
+        })
+    });
     for (r, secs) in rx {
         done += 1;
         match r {
@@ -228,6 +245,16 @@ fn main() {
                     r.reduced.n_float,
                     secs
                 );
+                if let Some(f) = history_file.as_mut() {
+                    use std::io::Write as _;
+                    let best: Vec<f64> = r.history.iter().map(|h| (h.best * 1e4).round() / 1e4).collect();
+                    let line = serde_json::json!({
+                        "id": r.id, "viable": r.viable, "stop": format!("{:?}", r.stop_reason),
+                        "generations": r.generations, "fitness": r.fitness, "secs": secs,
+                        "evaluations": r.evaluations, "best": best,
+                    });
+                    let _ = writeln!(f, "{line}");
+                }
                 if r.viable {
                     viable += 1;
                     viable_times.push(start.elapsed().as_secs_f64());

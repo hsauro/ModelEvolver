@@ -66,6 +66,9 @@ impl std::fmt::Display for SimError {
 pub struct Trajectory {
     pub t: Vec<f64>,
     pub cols: Vec<Vec<f64>>,
+    /// Internal solver steps taken.
+    #[serde(default)]
+    pub steps: usize,
 }
 
 /// Simulate `model` from t = 0 to `opts.t_end`, sampled at `opts.n_points`
@@ -94,7 +97,7 @@ pub fn simulate(model: &CompiledModel, opts: &SimOptions) -> Result<Trajectory, 
     solver.config_mut().maximum_number_timesteps = opts.max_total_steps;
     solver.set_stop_time(opts.t_end).map_err(|e| SimError::Setup(e.to_string()))?;
 
-    let mut traj = Trajectory { t: Vec::with_capacity(n_points), cols: vec![Vec::with_capacity(n_points); n] };
+    let mut traj = Trajectory { t: Vec::with_capacity(n_points), cols: vec![Vec::with_capacity(n_points); n], steps: 0 };
     let grid = |i: usize| opts.t_end * i as f64 / (n_points - 1) as f64;
     let push = |traj: &mut Trajectory, t: f64, y: &[f64]| -> Result<(), SimError> {
         traj.t.push(t);
@@ -114,6 +117,7 @@ pub fn simulate(model: &CompiledModel, opts: &SimOptions) -> Result<Trajectory, 
     while next < n_points {
         let reason = solver.step().map_err(|e| SimError::Solver { t: solver.state().t, message: e.to_string() })?;
         steps_since_output += 1;
+        traj.steps += 1;
         let t_now = solver.state().t;
         let at_end = matches!(reason, OdeSolverStopReason::TstopReached);
         while next < n_points && (grid(next) <= t_now || (at_end && next == n_points - 1)) {

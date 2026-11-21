@@ -21,8 +21,10 @@ pub struct EvolverConfig {
     pub num_experiments: u32,
     /// Keep starting new experiments until stopped.
     pub continuous: bool,
-    /// Parallel workers; 0 = all hardware threads.
+    /// Parallel workers; 0 = derive from `cpu_usage_percent`.
     pub num_workers: u32,
+    /// Share of the hardware threads a run may use (default 75%, never all by default).
+    pub cpu_usage_percent: u32,
 
     // GA
     pub max_population_size: usize,
@@ -64,6 +66,11 @@ pub struct EvolverConfig {
     pub osc_stop_threshold: f64,
     pub osc_viable_threshold: f64,
     pub osc_reduce_margin: f64,
+    /// Abandon an experiment whose best fitness is still above
+    /// `abandon_threshold` at generation `abandon_generation` (0 = never). In
+    /// continuous mode a fresh experiment takes its place.
+    pub abandon_generation: u32,
+    pub abandon_threshold: f64,
     /// Confirmation window; `osc_confirm_t_end <= 0` disables confirmation.
     pub osc_confirm_t_end: f64,
     pub osc_confirm_n_points: usize,
@@ -101,6 +108,7 @@ impl Default for EvolverConfig {
             num_experiments: 1,
             continuous: false,
             num_workers: 0,
+            cpu_usage_percent: 75,
             max_population_size: 100,
             max_generations: 1600,
             elite_fraction: 0.4,
@@ -129,6 +137,8 @@ impl Default for EvolverConfig {
             osc_stop_threshold: 0.05,
             osc_viable_threshold: 0.3,
             osc_reduce_margin: 0.05,
+            abandon_generation: 100,
+            abandon_threshold: 0.3,
             osc_confirm_t_end: 300.0,
             osc_confirm_n_points: 4096,
             max_concentration: 1000.0,
@@ -238,6 +248,17 @@ impl EvolverConfig {
             &self.initial_concentrations[..]
         };
         (0..n).map(|i| table[i % table.len()]).collect()
+    }
+
+    /// Number of workers for a machine with `hardware_threads` threads:
+    /// `num_workers` if set, else `cpu_usage_percent` of the threads (rounded
+    /// down, at least 1).
+    pub fn worker_count(&self, hardware_threads: usize) -> usize {
+        if self.num_workers > 0 {
+            return self.num_workers as usize;
+        }
+        let pct = self.cpu_usage_percent.clamp(1, 100) as usize;
+        (hardware_threads * pct / 100).max(1)
     }
 
     /// Reaction-type probabilities, normalised to sum to 1.
@@ -358,6 +379,16 @@ mod tests {
     fn validation_catches_problems() {
         let cfg = EvolverConfig { min_species: 6, max_species: 5, rate_change_fraction: 2.5, ..Default::default() };
         assert_eq!(cfg.validate().unwrap_err().len(), 2);
+    }
+
+    #[test]
+    fn worker_count_defaults_to_75_percent() {
+        let cfg = EvolverConfig::default();
+        assert_eq!(cfg.worker_count(20), 15);
+        assert_eq!(cfg.worker_count(8), 6);
+        assert_eq!(cfg.worker_count(1), 1);
+        let explicit = EvolverConfig { num_workers: 4, ..Default::default() };
+        assert_eq!(explicit.worker_count(20), 4);
     }
 
     #[test]

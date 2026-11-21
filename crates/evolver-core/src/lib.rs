@@ -5,6 +5,8 @@ pub mod compile;
 pub mod config;
 pub mod export;
 pub mod ga;
+#[cfg(feature = "antimony")]
+pub mod import;
 pub mod network;
 pub mod objective;
 pub mod osc;

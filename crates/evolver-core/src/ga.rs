@@ -47,6 +47,8 @@ pub enum StopReason {
     Stagnated,
     /// Every individual failed to simulate.
     Extinct,
+    /// Still above the abandon threshold at the abandon generation.
+    Abandoned,
 }
 
 /// A network plus its cached evaluation (cleared whenever it changes).
@@ -291,7 +293,18 @@ impl Experiment {
         let best = self.best_fitness();
         let g = self.generation;
         match self.cfg.objective {
-            ObjectiveKind::Oscillation => (best < self.cfg.osc_stop_threshold).then_some(StopReason::Converged),
+            ObjectiveKind::Oscillation => {
+                if best < self.cfg.osc_stop_threshold {
+                    Some(StopReason::Converged)
+                } else if self.cfg.abandon_generation > 0
+                    && g >= self.cfg.abandon_generation
+                    && best > self.cfg.abandon_threshold
+                {
+                    Some(StopReason::Abandoned)
+                } else {
+                    None
+                }
+            }
             ObjectiveKind::TimeCourse => {
                 if self.cfg.ssd_stagnation_rules && ((best > 800.0 && g > 600) || (best < 30.0 && g > 800)) {
                     Some(StopReason::Stagnated)
@@ -474,14 +487,17 @@ impl Experiment {
 }
 
 /// Greedy structural reduction (B14 fix): try removing each reaction in turn;
-/// keep the removal if the network stays viable and its fitness stays within
-/// the tolerance of the unreduced network's. Returns the reduced network, its
+/// keep the removal if the network stays structurally viable, its fitness stays
+/// below the viable threshold, and within the tolerance of the unreduced
+/// network's. Returns the reduced network, its
 /// evaluation and the number of evaluations used.
 pub fn reduce(net: &Network, base: Evaluation, cfg: &EvolverConfig, ctx: &RunContext) -> (Network, Evaluation, u64) {
     let base_fitness = base.fitness;
+    // A removal is kept only if the model stays viable and within the
+    // mode's tolerance of the unreduced fitness.
     let within = |f: f64| match cfg.objective {
-        ObjectiveKind::Oscillation => f <= base_fitness + cfg.osc_reduce_margin,
-        ObjectiveKind::TimeCourse => f <= 10.0 * base_fitness,
+        ObjectiveKind::Oscillation => f <= base_fitness + cfg.osc_reduce_margin && f < cfg.osc_viable_threshold,
+        ObjectiveKind::TimeCourse => f <= 10.0 * base_fitness && f < cfg.ssd_viable_threshold,
     };
     let window = if cfg.objective == ObjectiveKind::Oscillation { Window::Confirm } else { Window::Evolve };
     let mut current = net.clone();
@@ -611,6 +627,7 @@ mod tests {
         let (reduced, eval, _) = reduce(&net, base.clone(), &cfg, &ctx);
         assert!(reduced.reactions.len() <= 10, "{} reactions left", reduced.reactions.len());
         assert!(eval.fitness <= base.fitness + cfg.osc_reduce_margin);
+        assert!(eval.fitness < cfg.osc_viable_threshold);
         // The exported fitness is exactly that of the returned network.
         let again = evaluate(&reduced, &cfg, &ctx, Window::Confirm).unwrap();
         assert_eq!(again.fitness.to_bits(), eval.fitness.to_bits());

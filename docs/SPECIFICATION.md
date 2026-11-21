@@ -294,7 +294,8 @@ This is a port of `uReactionPatterns.pas`, unchanged in behaviour:
 | `seed: u32` (0 = random) | 0 | `-s` |
 | `num_experiments` | 1 | `-e` |
 | `continuous` (run until stopped) | false | new (8.3) |
-| `num_workers` (0 = auto) | 0 | `-nt` |
+| `cpu_usage_percent` | 75 | new: share of the computer's hardware threads a run may use |
+| `num_workers` (0 = derive from `cpu_usage_percent`) | 0 | `-nt` |
 | `max_population_size` | 100 | `-mp`, `maxPopulationSize` |
 | `max_generations` | 1600 | `-mg`, `maxNumberOfGenerations` |
 | `min_species`, `max_species` | 5, 5 | config |
@@ -310,6 +311,7 @@ This is a port of `uReactionPatterns.pas`, unchanged in behaviour:
 | `ssd_stagnation_rules` | on (fitness>800 after gen 600; <30 after gen 800) | hard-coded in loop |
 | `osc_t_end, osc_n_points` | 150, 2048 | config |
 | `osc_stop_threshold` | 0.05 | config |
+| `abandon_generation`, `abandon_threshold` | 100, 0.3 (0 = off) | new (M2): give up on an experiment still above the threshold at that generation |
 | `osc_viable_threshold` | 0.3 | config |
 | `osc_reduce_margin` | 0.05 | config |
 | `osc_confirm_t_end, osc_confirm_n_points` | 300, 4096 | config |
@@ -424,7 +426,9 @@ for each reaction r (in order):
 ```
 
 The tolerance is mode-specific: oscillation uses `fitness <= best + osc_reduce_margin`;
-SSD uses `fitness <= 10 * best` (the Pascal criterion). The exported model is exactly
+SSD uses `fitness <= 10 * best` (the Pascal criterion). In both modes the reduced model
+must also stay viable (below the mode's viable threshold); the Pascal 10x rule alone
+let time-course models degrade past viability (decided 2026-11-21). The exported model is exactly
 the network that was scored. Both the original and the reduced fitness are reported.
 
 ### 7.6 Experiment result
@@ -455,7 +459,7 @@ trait Executor {
 
 ### 8.1 Native
 
-- `num_workers` threads (default `available_parallelism()`), each pulling experiment ids
+- `num_workers` threads (default: 75% of `available_parallelism()`, see 8.4), each pulling experiment ids
   from an `AtomicU32` counter (the same design as the Pascal workers).
 - Each thread runs `Experiment::step` in a loop and sends events over a channel.
   Cancellation uses an `AtomicBool` checked between generations.
@@ -464,8 +468,8 @@ trait Executor {
 
 ### 8.2 Web (GitHub Pages)
 
-- A pool of `num_workers` dedicated Web Workers (default
-  `navigator.hardwareConcurrency - 1`, minimum 1). Each worker loads the same wasm
+- A pool of `num_workers` dedicated Web Workers (default: 75% of
+  `navigator.hardwareConcurrency`, see 8.4). Each worker loads the same wasm
   module through a worker entry point (`evolver-app/src/worker.rs`, built by trunk as a
   separate worker bundle).
 - The main thread acts as the dispatcher. It sends `Start { id, base_seed, cfg, ctx }`
@@ -476,7 +480,7 @@ trait Executor {
   the end.
 - Cancel: `worker.terminate()` on all workers and respawn the pool lazily.
 - No SharedArrayBuffer or COOP/COEP is required.
-- `num_workers = 0` means "auto" (as above), not single-threaded. A main-thread
+- `num_workers = 0` means "derive from the CPU usage setting" (8.4), not single-threaded. A main-thread
   executor exists only as a developer debug option, hidden behind a build feature; it
   is not offered to users.
 
@@ -507,11 +511,35 @@ Throughput comes from three sources, in order of importance:
    `codegen-units = 1`, `panic = "abort"` (wasm); `wasm-opt -O3`; wasm `simd128`
    target feature if it helps (measured, not assumed).
 
+4. **Abandoning hopeless experiments** (measured in M2, the biggest single gain:
+   2.7x successes per minute): stop an experiment whose best fitness is still above
+   0.3 at generation 100. Continuous mode immediately starts a fresh one.
+
+The headline throughput metric is **successes (viable models) per minute**.
+
 Instrumentation (shown on the Progress tab): evaluations per second per worker,
 viable models per minute, and time since the last viable model. A `criterion`
 benchmark of `evaluate()` on a fixed set of networks guards against regressions.
 
 ---
+
+### 8.4 CPU usage setting (user-controlled)
+
+A run must never take the whole computer by default. The user decides how much of it
+a run may use:
+
+- Setting: **CPU usage**, a slider in the Settings panel (and on the Run bar so it is
+  visible before pressing Start), shown both as a percentage and as the resulting
+  number of workers, e.g. "75%  (15 of 20 threads)". An "Advanced: exact number of
+  workers" field may override the percentage.
+- Default: **75%** of the hardware threads reported by the system
+  (`navigator.hardwareConcurrency` on the web, `available_parallelism()` natively),
+  rounded down, minimum 1 worker. 100% is allowed only when the user explicitly
+  chooses it.
+- The setting persists between sessions (eframe storage / localStorage).
+- Changing it during a run takes effect as workers finish their current experiment
+  (no running experiment is killed).
+- The CLI follows the same default (75%) unless `-nt` is given.
 
 ## 9. User interface (egui)
 
@@ -524,7 +552,7 @@ Layout: left side panel **Settings**, top bar **Run controls**, central area wit
 |---|---|
 | `-s seed` | numeric field + "random" checkbox; the last used seed is shown |
 | `-e` | number of experiments (DragValue) + "Run until stopped" checkbox |
-| `-nt` | workers (DragValue, 0 = auto) |
+| `-nt` | CPU usage slider, default 75% (8.4); exact worker count under Advanced |
 | `-mp`, `-mg` | population size, max generations |
 | `-osc` | objective radio: Time-course match / Sustained oscillation |
 | objectivefunction.txt | "Load target..." button + inline preview plot of the target |

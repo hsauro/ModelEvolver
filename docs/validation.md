@@ -104,5 +104,68 @@ hopeless experiments.
 
 Time-course mode: the Pascal reduction criterion (keep removing reactions while
 the fitness stays within 10x of the unreduced model) lets reduced models degrade a
-lot (46 -> 186, beyond the viable threshold of 100). This needs a decision: keep the
-Pascal criterion, or require the reduced model to stay viable.
+lot (46 -> 186, beyond the viable threshold of 100). Decided: a reduced model must
+also stay viable, in both modes.
+
+## M2 - validation against Pascal and throughput tuning (2026-11-21)
+
+Headline metric: **viable models (successes) per minute** in continuous mode.
+The share of experiments that succeed is secondary.
+
+### Agreement with the Pascal corpus
+
+All 445 models in the Pascal `results_osc_1` corpus were imported (via the
+`antimony` crate, `import.rs`) and re-scored by the Rust version (diffsol BDF,
+t = 0..150, 2048 points). Tool: `tune score DIR`.
+
+- 441 simulate; Rust and Pascal agree on viability (fitness < 0.3) for 416 of 441
+  (94%). Median |fitness difference| is 0.039, mostly from B19 (Pascal scores
+  oscillators lower) and from Pascal reporting the pre-reduction fitness.
+- 26 of the 445 Pascal files contain a species written as floating that no
+  reaction produces (B14: deleted reactions without reclassifying). The Rust
+  importer derives boundaries from the structure, so these are scored as a
+  different model; they account for the disagreements. Tellurium (which keeps the
+  file's markers) scores 5 of 6 checked ones as oscillating, but only while that
+  species slowly drains.
+
+### Solver tolerances (`tune tol DIR`, 445 Pascal oscillators, 8 threads)
+
+| rtol | atol | speed-up | mean steps | flips vs reference |
+|---|---|---|---|---|
+| 1e-6 | 1e-10 | 1.00x | 9,453 | 11 |
+| 1e-6 | 1e-8 | 1.11x | 8,763 | 16 |
+| 1e-5 | 1e-8 | 1.44x | 6,064 | 19 |
+| 1e-4 | 1e-8 | 1.73x | 4,073 | 27 |
+| 1e-3 | 1e-6 | 2.34x | 2,551 | 58 |
+
+Reference: rtol 1e-9, atol 1e-13. "Flips" = models whose viable (0.3) or
+converged (0.05) decision changes. The cost is in the number of steps
+(~1.5 microseconds each), not in solver overhead. Relaxing tolerances buys
+little and changes decisions, so the Pascal tolerances (1e-6 / 1e-10) stay.
+
+### Abandoning hopeless experiments
+
+Replaying run A's histories (49 experiments, 20 threads) showed that
+experiments still above fitness 0.3 at generation 100 rarely pay off soon enough;
+continuous mode does better by starting a fresh experiment. Measured on
+8 cores, 5 minutes each, seed 202:
+
+| Setting | Experiments | Viable | **Successes/min** | CPU-s per success |
+|---|---|---|---|---|
+| Baseline (no abandoning) | 41 | 31 (76%) | **3.7** | 101 |
+| Abandon at gen 100 if fitness > 0.3 | 192 | 52 (27%) | **10.0** | 47 |
+| Abandon + 80/1024 evolution window | 318 | 66 (21%) | **9.5** | 40 |
+
+Decisions:
+
+- Abandoning is **on by default** (`abandon_generation = 100`,
+  `abandon_threshold = 0.3`): 2.7x more successes per minute. It is a visible
+  setting so a fixed batch can switch it off, letting every experiment run to the end
+  (76% success per experiment, but slower).
+- The evolution window stays at 150 / 2048. The 80 / 1024 window gives no more
+  successes per minute, and its candidates fail confirmation far more often
+  (19 of 84 versus 2 of 54).
+- Expected browser rate: on this machine, the default 75% CPU setting (15 workers)
+  is about the throughput of 7.5 native threads (wasm is ~2x slower), so about one
+  success every 6-7 s. On a typical 8-thread laptop (6 workers, ~3 native-thread
+  equivalents), about one every 15-16 s. Both are within the 15-20 s target.
