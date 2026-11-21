@@ -370,7 +370,7 @@ impl App {
             stat(ui, "Successes", self.run_successes.to_string(), Some(SUCCESS));
             stat(ui, "Successes / min", if active > 5.0 { format!("{rate:.1}") } else { "-".into() }, None)
                 .on_hover_text("Successes per minute while new experiments were being started (the clock stops at Stop)");
-            let per = if self.run_successes > 0 { format_duration(elapsed / f64::from(self.run_successes)) } else { "-".into() };
+            let per = if self.run_successes > 0 { format_seconds(elapsed / f64::from(self.run_successes)) } else { "-".into() };
             stat(ui, "Time per success", per, None)
                 .on_hover_text("Total real time of the run divided by the number of successes");
             let since = self.last_success.map_or("-".into(), |t| format!("{:.0} s ago", t.elapsed().as_secs_f64()));
@@ -438,6 +438,19 @@ fn stat(ui: &mut egui::Ui, label: &str, value: String, color: Option<Color32>) -
     .response
 }
 
+/// A short span with units: "14 s", "1 min 05 s", "2 h 03 min".
+pub fn format_seconds(secs: f64) -> String {
+    let s = secs.max(0.0).round() as u64;
+    if s < 60 {
+        format!("{s} s")
+    } else if s < 3600 {
+        format!("{} min {:02} s", s / 60, s % 60)
+    } else {
+        format!("{} h {:02} min", s / 3600, (s / 60) % 60)
+    }
+}
+
+/// A clock-style duration, "m:ss" or "h:mm:ss".
 pub fn format_duration(secs: f64) -> String {
     let s = secs.max(0.0) as u64;
     if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
