@@ -273,6 +273,7 @@ impl App {
                     files.push((name, e.r.antimony.clone()));
                 }
                 if let Some(msg) = self.files.save_zip("modelevolver-models.zip", &files) {
+                    self.unsaved_successes = 0;
                     self.set_status(msg);
                 }
             }

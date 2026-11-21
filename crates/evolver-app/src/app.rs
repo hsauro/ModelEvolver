@@ -133,6 +133,10 @@ pub struct App {
     ui_ms: f32,
     frames: Vec<Instant>,
     pub show_about: bool,
+    /// Successes not yet saved with "Save all successes (zip)".
+    pub unsaved_successes: usize,
+    /// True when leaving the page would lose work (read by the beforeunload handler).
+    leave_guard: Rc<std::cell::Cell<bool>>,
 }
 
 impl App {
@@ -174,7 +178,10 @@ impl App {
             ui_ms: 0.0,
             frames: Vec::new(),
             show_about: false,
+            unsaved_successes: 0,
+            leave_guard: Rc::new(std::cell::Cell::new(false)),
         };
+        install_leave_warning(app.leave_guard.clone());
         app.revalidate();
         app
     }
@@ -234,6 +241,7 @@ impl App {
                     let (cfg, target) = self.run_cfg.clone().unwrap_or_else(|| (Rc::new(self.cfg.clone()), Rc::new(self.target.clone())));
                     if r.viable {
                         self.run_successes += 1;
+                        self.unsaved_successes += 1;
                         self.last_success = Some(Instant::now());
                     }
                     let first = self.results.is_empty();
@@ -562,6 +570,28 @@ pub fn format_seconds(secs: f64) -> String {
 }
 
 /// A clock-style duration, "m:ss" or "h:mm:ss".
+/// In the browser, ask before the page is reloaded or closed while `guard`
+/// is set (results would be lost). Does nothing on the desktop.
+fn install_leave_warning(guard: Rc<std::cell::Cell<bool>>) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use eframe::wasm_bindgen::JsCast;
+        use eframe::wasm_bindgen::prelude::Closure;
+        let Some(window) = web_sys::window() else { return };
+        let handler = Closure::<dyn FnMut(web_sys::BeforeUnloadEvent)>::new(move |e: web_sys::BeforeUnloadEvent| {
+            if guard.get() {
+                // Browsers show their own generic "Leave site?" message.
+                e.prevent_default();
+                e.set_return_value("Results that have not been saved will be lost.");
+            }
+        });
+        window.set_onbeforeunload(Some(handler.as_ref().unchecked_ref()));
+        handler.forget();
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = guard;
+}
+
 /// The bold font family (Noto Sans Bold).
 pub fn bold() -> egui::FontFamily {
     egui::FontFamily::Name("bold".into())
@@ -635,6 +665,7 @@ impl eframe::App for App {
         self.frames.push(now);
         self.handle_runner();
         self.handle_files();
+        self.leave_guard.set(!self.is_idle() || self.unsaved_successes > 0);
         if !self.is_idle() {
             // Keep the elapsed time and "last success" counters moving.
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
