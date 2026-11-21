@@ -192,7 +192,7 @@ impl App {
     fn welcome(&mut self, ui: &mut egui::Ui) {
         ui.add_space(30.0);
         ui.vertical_centered(|ui| {
-            ui.label(RichText::new("Evolve chemical reaction networks").size(24.0).strong());
+            ui.label(RichText::new("Evolve chemical reaction networks").size(24.0).family(crate::app::bold()));
             ui.add_space(8.0);
             ui.label(
                 "ModelEvolver uses a genetic algorithm to evolve mass-action reaction networks that oscillate,\n\

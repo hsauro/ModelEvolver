@@ -141,6 +141,7 @@ impl App {
         let target = get("target").and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
         let target_name = get("target_name").unwrap_or_else(|| "built-in square wave".into());
         let prefs: Prefs = get("prefs").and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
+        install_fonts(&cc.egui_ctx);
         apply_theme(&cc.egui_ctx, prefs.dark);
         let mut app = Self {
             cfg,
@@ -316,7 +317,7 @@ impl App {
 
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("ModelEvolver").size(22.0).strong().color(ACCENT));
+            ui.label(RichText::new("ModelEvolver").size(22.0).family(bold()).color(ACCENT));
             ui.add_space(16.0);
             let idle = self.is_idle();
             let running = self.runner.state == RunState::Running;
@@ -408,7 +409,7 @@ impl App {
                 (Tab::Model, "Model".to_string()),
             ] {
                 let selected = self.tab == tab;
-                let text = if selected { RichText::new(label).strong().color(Color32::WHITE) } else { RichText::new(label) };
+                let text = if selected { RichText::new(label).family(bold()).color(Color32::WHITE) } else { RichText::new(label) };
                 if ui.selectable_label(selected, text).clicked() {
                     self.tab = tab;
                 }
@@ -433,46 +434,100 @@ pub const FUNDING: &str = "This project has been funded in whole or in part with
 
 impl App {
     fn about_window(&mut self, ctx: &egui::Context) {
-        let mut open = self.show_about;
-        egui::Window::new("About ModelEvolver")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .default_width(520.0)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
-                ui.label(RichText::new("ModelEvolver").size(22.0).strong().color(ACCENT));
-                ui.label(format!("Version {}", evolver_core::export::VERSION));
-                ui.add_space(6.0);
-                ui.label(
-                    "Evolves mass-action chemical reaction networks with a genetic algorithm, to find networks \
-                     that oscillate or that follow a target time course. A Rust port of the Object Pascal \
-                     OscillatorEvolver.",
-                );
-                ui.add_space(6.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.label("Source code:");
-                    ui.hyperlink("https://github.com/hsauro/ModelEvolver");
-                });
-                ui.add_space(6.0);
-                ui.label(RichText::new("Built with").strong());
-                ui.label(
-                    "diffsol (adaptive BDF ODE solver), egui / eframe (user interface), egui_plot, rustfft, \
-                     and the antimony crate (Antimony model checking).",
-                );
-                ui.add_space(8.0);
-                ui.label(RichText::new("Funding").strong());
-                ui.label(FUNDING);
+        if !self.show_about {
+            return;
+        }
+        const REPO: &str = "https://github.com/hsauro/ModelEvolver";
+        let style = ctx.global_style();
+        let dark = style.visuals.dark_mode;
+        let text = if dark { Color32::from_gray(230) } else { Color32::from_gray(20) };
+        let soft = if dark { Color32::from_gray(190) } else { Color32::from_gray(60) };
+        let body = |s: &str| RichText::new(s).color(text).size(14.5);
+        let card = if dark { Color32::from_gray(40) } else { Color32::WHITE };
+        let frame = egui::Frame::popup(&style).fill(card).inner_margin(egui::Margin::same(26)).corner_radius(12);
+        let response = egui::Modal::new(egui::Id::unique("about_modal")).frame(frame).show(ctx, |ui| {
+            ui.set_width(560.0);
+            ui.label(RichText::new("ModelEvolver").size(26.0).family(bold()).color(text));
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.label(RichText::new(format!("Version {}", evolver_core::export::VERSION)).color(soft));
+                // The commit this build was made from (set by GitHub Actions).
+                if let Some(sha) = option_env!("GITHUB_SHA") {
+                    let short = &sha[..sha.len().min(7)];
+                    ui.label(RichText::new(" (build ").color(soft));
+                    ui.hyperlink_to(short, format!("{REPO}/commit/{sha}"));
+                    ui.label(RichText::new(")").color(soft));
+                }
             });
-        self.show_about = open;
+            ui.add_space(10.0);
+            ui.label(body(
+                "Evolve mass-action chemical reaction networks with a genetic algorithm, to find networks that \
+                 oscillate or that follow a target time course. Every candidate is simulated with an adaptive \
+                 stiff (BDF) solver. Everything runs in your browser, on as many processor cores as you allow.",
+            ));
+
+            let heading = |ui: &mut egui::Ui, t: &str| {
+                ui.add_space(14.0);
+                ui.label(RichText::new(t).size(16.5).family(bold()).color(text));
+                ui.add_space(2.0);
+            };
+            let bullet = |ui: &mut egui::Ui, add: &dyn Fn(&mut egui::Ui)| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 18.0), egui::Sense::hover());
+                    ui.painter().circle_filled(egui::pos2(rect.left() + 9.0, rect.center().y), 2.6, text);
+                    add(ui);
+                });
+            };
+
+            heading(ui, "Software");
+            bullet(ui, &|ui| {
+                ui.label(body("Written in Rust, compiled to WebAssembly. Source code: "));
+                ui.hyperlink_to("hsauro/ModelEvolver", REPO);
+            });
+            bullet(ui, &|ui| {
+                ui.label(body("ODE solver: "));
+                ui.hyperlink_to("diffsol", "https://github.com/martinjrobins/diffsol");
+                ui.label(body(" (adaptive BDF)"));
+            });
+            bullet(ui, &|ui| {
+                ui.label(body("User interface: "));
+                ui.hyperlink_to("egui / eframe", "https://github.com/emilk/egui");
+                ui.label(body(" and egui_plot"));
+            });
+            bullet(ui, &|ui| {
+                ui.label(body("Antimony export checked with the antimony crate; FFT by rustfft"));
+            });
+            bullet(ui, &|ui| {
+                ui.label(body("A port of the Object Pascal OscillatorEvolver"));
+            });
+
+            heading(ui, "Funding");
+            ui.label(RichText::new(FUNDING).color(soft).size(13.5));
+
+            ui.add_space(18.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let close = egui::Button::new(RichText::new("Close").size(15.5).color(Color32::WHITE))
+                    .fill(ACCENT)
+                    .corner_radius(8)
+                    .min_size(egui::vec2(96.0, 34.0));
+                if ui.add(close).clicked() {
+                    ui.close();
+                }
+            });
+        });
+        if response.should_close() {
+            self.show_about = false;
+        }
     }
 }
 
 fn stat(ui: &mut egui::Ui, label: &str, value: String, color: Option<Color32>) -> egui::Response {
     egui::Frame::group(ui.style()).inner_margin(egui::Margin::symmetric(10, 4)).show(ui, |ui| {
         ui.vertical(|ui| {
-            ui.label(RichText::new(label).small().weak());
-            let mut v = RichText::new(value).size(17.0).strong();
+            let label_color = if ui.visuals().dark_mode { Color32::from_gray(175) } else { Color32::from_gray(70) };
+            ui.label(RichText::new(label).small().color(label_color));
+            let mut v = RichText::new(value).size(17.0).family(bold());
             if let Some(c) = color {
                 v = v.color(c);
             }
@@ -495,6 +550,34 @@ pub fn format_seconds(secs: f64) -> String {
 }
 
 /// A clock-style duration, "m:ss" or "h:mm:ss".
+/// The bold font family (Noto Sans Bold).
+pub fn bold() -> egui::FontFamily {
+    egui::FontFamily::Name("bold".into())
+}
+
+/// Noto Sans (regular, and bold as its own family) instead of egui's thin
+/// Ubuntu Light. The fonts are under the SIL Open Font License
+/// (assets/fonts/NotoSans-OFL.txt).
+fn install_fonts(ctx: &egui::Context) {
+    use std::sync::Arc;
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "noto".into(),
+        Arc::new(egui::FontData::from_static(include_bytes!("../assets/fonts/NotoSans-Regular.ttf"))),
+    );
+    fonts.font_data.insert(
+        "noto-bold".into(),
+        Arc::new(egui::FontData::from_static(include_bytes!("../assets/fonts/NotoSans-Bold.ttf"))),
+    );
+    if let Some(prop) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        prop.insert(0, "noto".into());
+    }
+    let mut bold_chain = vec!["noto-bold".to_string()];
+    bold_chain.extend(fonts.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default());
+    fonts.families.insert(bold(), bold_chain);
+    ctx.set_fonts(fonts);
+}
+
 pub fn format_duration(secs: f64) -> String {
     let s = secs.max(0.0) as u64;
     if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
@@ -525,6 +608,8 @@ pub fn apply_theme(ctx: &egui::Context, dark: bool) {
         v.widgets.hovered.fg_stroke.color = Color32::BLACK;
         v.widgets.active.fg_stroke.color = Color32::BLACK;
         v.weak_text_color = Some(Color32::from_gray(95));
+        v.override_text_color = Some(Color32::from_gray(25));
+        v.hyperlink_color = Color32::from_rgb(0x1d, 0x5f, 0xc4);
     });
 }
 

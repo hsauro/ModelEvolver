@@ -67,14 +67,14 @@ fn sci(ui: &mut egui::Ui, label: &str, v: &mut f64, help: &str) -> bool {
 }
 
 fn section(ui: &mut egui::Ui, title: &str, open: bool, add: impl FnOnce(&mut egui::Ui)) {
-    egui::CollapsingHeader::new(RichText::new(title).strong()).default_open(open).show(ui, add);
+    egui::CollapsingHeader::new(RichText::new(title).family(crate::app::bold())).default_open(open).show(ui, add);
 }
 
 impl App {
     pub fn settings_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.heading("Settings");
+            ui.label(RichText::new("Settings").size(19.0).family(crate::app::bold()));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.menu_button("More", |ui| {
                     if ui.button("Oscillator preset").on_hover_text("Settings that produced the Pascal oscillator corpus").clicked() {
