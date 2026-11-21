@@ -54,6 +54,7 @@ pub struct Prefs {
     pub grid_rows: usize,
     pub grid_all_species: bool,
     pub grid_include_failed: bool,
+    pub grid_tail_only: bool,
     pub results_viable_only: bool,
     pub progress_log_y: bool,
 }
@@ -66,6 +67,7 @@ impl Default for Prefs {
             grid_rows: 3,
             grid_all_species: false,
             grid_include_failed: false,
+            grid_tail_only: true,
             results_viable_only: true,
             progress_log_y: true,
         }

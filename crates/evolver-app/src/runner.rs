@@ -167,7 +167,18 @@ impl Runner {
     pub fn poll(&mut self) -> Vec<RunnerEvent> {
         let mut out = Vec::new();
         for (slot, reply) in self.pool.poll() {
-            let Reply::Event(event) = reply else { continue };
+            let event = match reply {
+                Reply::Event(e) => e,
+                Reply::Ready => continue,
+                Reply::WorkerError(message) => {
+                    if let Some(Some(id)) = self.slot_exp.get(slot).copied() {
+                        self.free(slot, id);
+                        self.pool.discard(slot);
+                        out.push(RunnerEvent::Failed { id, message: format!("worker error: {message}") });
+                    }
+                    continue;
+                }
+            };
             match event {
                 ExperimentEvent::Progress(p) => {
                     if let Some(l) = self.live.get_mut(&p.id) {
@@ -239,6 +250,9 @@ mod pool {
             });
         }
 
+        /// Nothing to do natively (a thread that failed has already exited).
+        pub fn discard(&mut self, _slot: usize) {}
+
         pub fn cancel_all(&mut self) {
             self.cancel.store(true, Ordering::Relaxed);
             self.cancel = Arc::new(AtomicBool::new(false));
@@ -264,9 +278,10 @@ mod pool {
     struct Slot {
         worker: Worker,
         /// A request waiting for the worker to report Ready.
-        pending: Rc<RefCell<Option<String>>>,
+        pending: Rc<RefCell<Option<Vec<u8>>>>,
         ready: Rc<std::cell::Cell<bool>>,
         _handler: Closure<dyn FnMut(MessageEvent)>,
+        _on_error: Closure<dyn FnMut(web_sys::ErrorEvent)>,
     }
 
     /// One Web Worker per slot, created on demand; cancel terminates them all.
@@ -288,40 +303,56 @@ mod pool {
             if self.slots[index].is_none() {
                 // Trunk builds the `worker` bin with a loader shim (index.html).
                 let worker = Worker::new("./worker_loader.js").ok()?;
-                let pending: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+                let pending: Rc<RefCell<Option<Vec<u8>>>> = Rc::new(RefCell::new(None));
                 let ready = Rc::new(std::cell::Cell::new(false));
                 let (replies, ctx, w2, p2, r2) =
                     (self.replies.clone(), self.ctx.clone(), worker.clone(), pending.clone(), ready.clone());
                 let handler = Closure::<dyn FnMut(MessageEvent)>::new(move |event: MessageEvent| {
-                    let text = event.data().as_string().unwrap_or_default();
-                    match serde_json::from_str::<Reply>(&text) {
+                    let bytes = js_sys::Uint8Array::new(&event.data()).to_vec();
+                    match evolver_app::tasks::decode::<Reply>(&bytes) {
                         Ok(Reply::Ready) => {
                             r2.set(true);
-                            if let Some(json) = p2.borrow_mut().take() {
-                                let _ = w2.post_message(&JsValue::from_str(&json));
+                            if let Some(req) = p2.borrow_mut().take() {
+                                let _ = w2.post_message(&js_sys::Uint8Array::from(&req[..]));
                             }
                         }
                         Ok(reply) => {
                             replies.borrow_mut().push((index, reply));
                             ctx.request_repaint();
                         }
-                        Err(_) => {}
+                        Err(e) => {
+                            replies.borrow_mut().push((index, Reply::WorkerError(format!("unreadable message: {e}"))));
+                            ctx.request_repaint();
+                        }
                     }
                 });
                 worker.set_onmessage(Some(handler.as_ref().unchecked_ref()));
-                self.slots[index] = Some(Slot { worker, pending, ready, _handler: handler });
+                let (replies, ctx) = (self.replies.clone(), self.ctx.clone());
+                let on_error = Closure::<dyn FnMut(web_sys::ErrorEvent)>::new(move |e: web_sys::ErrorEvent| {
+                    replies.borrow_mut().push((index, Reply::WorkerError(e.message())));
+                    ctx.request_repaint();
+                });
+                worker.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+                self.slots[index] = Some(Slot { worker, pending, ready, _handler: handler, _on_error: on_error });
             }
             self.slots[index].as_ref()
         }
 
         pub fn start(&mut self, index: usize, req: RunRequest) {
-            let Ok(json) = serde_json::to_string(&req) else { return };
+            let bytes = evolver_app::tasks::encode(&req);
             if let Some(slot) = self.slot(index) {
                 if slot.ready.get() {
-                    let _ = slot.worker.post_message(&JsValue::from_str(&json));
+                    let _ = slot.worker.post_message(&js_sys::Uint8Array::from(&bytes[..]));
                 } else {
-                    *slot.pending.borrow_mut() = Some(json);
+                    *slot.pending.borrow_mut() = Some(bytes);
                 }
+            }
+        }
+
+        /// Terminate a broken worker; a fresh one is created on next use.
+        pub fn discard(&mut self, index: usize) {
+            if let Some(slot) = self.slots.get_mut(index).and_then(Option::take) {
+                slot.worker.terminate();
             }
         }
 

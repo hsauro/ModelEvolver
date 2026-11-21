@@ -114,8 +114,10 @@ impl App {
                     });
                     row.col(|ui| {
                         let g = p.map_or(0, |p| p.generation);
-                        ui.label(format!("{g:>5}"));
-                        ui.add(egui::ProgressBar::new(g as f32 / max_gen.max(1) as f32).desired_height(6.0).desired_width(110.0));
+                        ui.horizontal_centered(|ui| {
+                            ui.add_sized([44.0, 18.0], egui::Label::new(g.to_string()));
+                            ui.add(egui::ProgressBar::new(g as f32 / max_gen.max(1) as f32).desired_height(8.0).desired_width(120.0));
+                        });
                     });
                     row.col(|ui| {
                         ui.label(p.map_or("-".into(), |p| format!("{:.4}", p.best_fitness)));
@@ -383,6 +385,8 @@ impl App {
             ui.checkbox(&mut self.prefs.grid_all_species, "All species")
                 .on_hover_text("Show every floating species instead of only the best-scoring one");
             ui.checkbox(&mut self.prefs.grid_include_failed, "Include non-successes");
+            ui.checkbox(&mut self.prefs.grid_tail_only, "Last quarter only")
+                .on_hover_text("Show only the last 25% of the time span, where the waveform is easier to see");
         });
         if rows.is_empty() {
             ui.add_space(20.0);
@@ -426,7 +430,9 @@ impl App {
                                     ui.label(RichText::new(fmt_fit(e.r.fitness)).color(c));
                                     ui.label(RichText::new(format!("{} rxn", e.r.reduced.reactions.len())).weak());
                                 });
-                                if let Some(traj) = &e.r.display {
+                                let tail = self.prefs.grid_tail_only;
+                                if let Some(traj) = e.r.display.as_ref().map(|t| if tail { tail_part(t, 0.75) } else { t.clone() }) {
+                                    let traj = &traj;
                                     let only = (!self.prefs.grid_all_species).then_some(e.r.best_node);
                                     let resp = Plot::new(("grid", e.run, e.r.id))
                                         .height(cell_h)
@@ -643,6 +649,12 @@ impl App {
             });
         });
     }
+}
+
+/// The part of a trajectory after `frac` of its samples.
+fn tail_part(traj: &Trajectory, frac: f64) -> Trajectory {
+    let start = (traj.t.len() as f64 * frac) as usize;
+    Trajectory { t: traj.t[start..].to_vec(), cols: traj.cols.iter().map(|c| c[start..].to_vec()).collect(), steps: traj.steps }
 }
 
 /// Plot bounds covering the whole time span and the y-range after the first
