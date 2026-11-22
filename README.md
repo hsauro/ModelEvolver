@@ -9,7 +9,7 @@ cores) and on the desktop. It is a Rust port of the Object Pascal
 
 **Try it in the browser: https://hsauro.github.io/ModelEvolver/**
 
-Current version: **1.0.0**.
+Current version: **1.0.1** ([release notes](docs/RELEASE_NOTES_1.0.1.md)).
 
 ## Using the app
 
