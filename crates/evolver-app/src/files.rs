@@ -20,6 +20,8 @@ pub type Opened = (OpenKind, String, Result<String, String>);
 #[derive(Default)]
 pub struct Files {
     opened: Rc<RefCell<Vec<Opened>>>,
+    /// Used to wake the UI when a file has been read in the background.
+    pub ctx: Option<eframe::egui::Context>,
 }
 
 impl Files {
@@ -42,10 +44,15 @@ impl Files {
             let dialog =
                 rfd::AsyncFileDialog::new().set_title(title).add_filter("files", ext).add_filter("all", &["*"]);
             let opened = self.opened.clone();
+            let ctx = self.ctx.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 if let Some(file) = dialog.pick_file().await {
                     let bytes = file.read().await;
                     opened.borrow_mut().push((kind, file.file_name(), Ok(String::from_utf8_lossy(&bytes).into_owned())));
+                    // Without this the app would only notice the file at the next mouse movement.
+                    if let Some(ctx) = ctx {
+                        ctx.request_repaint();
+                    }
                 }
             });
         }

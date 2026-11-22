@@ -83,11 +83,17 @@ impl SessionFile {
     }
 
     pub fn from_json(text: &str) -> Result<Self, String> {
-        let mut s: SessionFile = serde_json::from_str(text).map_err(|_| {
+        if text.starts_with("PK") {
+            return Err("this is a zip file (e.g. from 'Save all successes'), which holds only model files.                         A session is saved with 'Save session...' as a .json file."
+                .into());
+        }
+        let mut s: SessionFile = serde_json::from_str(text).map_err(|e| {
             if text.contains(evolver_core::objective::SHARED_CONFIG_FORMAT) {
                 "this is a configuration file; use Load configuration (top of the Settings panel)".to_string()
+            } else if !text.contains(SESSION_FORMAT) {
+                format!("this file is not a ModelEvolver session (it does not contain '{SESSION_FORMAT}')")
             } else {
-                "this file is not a ModelEvolver session".to_string()
+                format!("the session file could not be read: {e}")
             }
         })?;
         if s.format != SESSION_FORMAT {
@@ -111,6 +117,52 @@ mod tests {
     use super::*;
     use evolver_app::tasks::{Reply, RunRequest, run_experiment};
     use evolver_core::ga::ExperimentEvent;
+
+    #[test]
+    fn realistic_session_round_trip() {
+        let cfg = EvolverConfig {
+            max_generations: 30,
+            max_population_size: 20,
+            osc_t_end: 60.0,
+            osc_n_points: 256,
+            osc_confirm_t_end: 120.0,
+            osc_confirm_n_points: 512,
+            ..EvolverConfig::oscillator_preset()
+        };
+        let mut results = Vec::new();
+        for id in 0..12 {
+            run_experiment(
+                RunRequest { id, base_seed: 77, cfg: cfg.clone(), target: Target::default() },
+                |r| {
+                    if let Reply::Event(ExperimentEvent::Finished(x)) = r {
+                        results.push(SessionResult { run: 1, secs: 2.0, result: *x });
+                    }
+                },
+                || false,
+            );
+        }
+        assert_eq!(results.len(), 12);
+        let run = RunRecord {
+            run: 1,
+            settings: cfg,
+            target: Target::default(),
+            base_seed: 77,
+            workers: 7,
+            active_secs: 60.0,
+            elapsed_secs: 70.0,
+            experiments: 12,
+            successes: results.iter().filter(|r| r.result.viable).count() as u32,
+        };
+        let file = SessionFile::new(vec![run], results);
+        let json = file.to_json();
+        let back = SessionFile::from_json(&json).expect("a saved session must load");
+        assert_eq!(back.results.len(), 12);
+        for (a, b) in file.results.iter().zip(&back.results) {
+            assert_eq!(a.result.reduced, b.result.reduced);
+            assert_eq!(a.result.antimony, b.result.antimony);
+            assert_eq!(a.result.viable, b.result.viable);
+        }
+    }
 
     #[test]
     fn round_trip_with_infinite_fitness() {

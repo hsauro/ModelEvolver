@@ -151,6 +151,8 @@ pub struct App {
     /// A session waiting for the user to confirm replacing unsaved results.
     pending_session: Option<(String, SessionFile)>,
     runner_ctx: egui::Context,
+    /// A message shown in a dialog (title, text), e.g. why a file could not be loaded.
+    pub alert: Option<(String, String)>,
 }
 
 impl App {
@@ -198,7 +200,9 @@ impl App {
             loaded_times: None,
             pending_session: None,
             runner_ctx: cc.egui_ctx.clone(),
+            alert: None,
         };
+        app.files.ctx = Some(cc.egui_ctx.clone());
         install_leave_warning(app.leave_guard.clone());
         app.revalidate();
         app
@@ -312,7 +316,7 @@ impl App {
             let text = match text {
                 Ok(t) => t,
                 Err(e) => {
-                    self.set_status(format!("Could not read {name}: {e}"));
+                    self.alert = Some(("Could not read the file".into(), format!("{name}: {e}")));
                     continue;
                 }
             };
@@ -324,7 +328,7 @@ impl App {
                         self.cfg.objective = ObjectiveKind::TimeCourse;
                         self.set_status(format!("Loaded target {name}"));
                     }
-                    Err(e) => self.set_status(format!("{name}: {e}")),
+                    Err(e) => self.alert = Some(("Could not load the target".into(), format!("{name}: {e}"))),
                 },
                 OpenKind::Patterns => {
                     self.cfg.reaction_patterns = text;
@@ -346,7 +350,7 @@ impl App {
                             self.apply_session(&name, file);
                         }
                     }
-                    Err(e) => self.set_status(format!("{name}: {e}")),
+                    Err(e) => self.alert = Some(("Could not load the session".into(), format!("{name}: {e}"))),
                 },
                 OpenKind::SettingsJson => match evolver_core::objective::SharedConfig::from_json(&text) {
                     Ok(shared) => {
@@ -360,7 +364,7 @@ impl App {
                         let seed = if self.cfg.seed == 0 { "random seed".to_string() } else { format!("seed {}", self.cfg.seed) };
                         self.set_status(format!("Loaded configuration {name} ({}, {seed})", shared.created_by));
                     }
-                    Err(e) => self.set_status(format!("{name}: {e}")),
+                    Err(e) => self.alert = Some(("Could not load the configuration".into(), format!("{name}: {e}"))),
                 },
             }
             self.revalidate();
@@ -664,6 +668,26 @@ impl App {
         ));
     }
 
+    fn alert_dialog(&mut self, ctx: &egui::Context) {
+        let Some((title, text)) = self.alert.clone() else { return };
+        let mut close = false;
+        let r = egui::Modal::new(egui::Id::unique("alert")).show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.label(RichText::new(title).size(17.0).family(bold()));
+            ui.add_space(6.0);
+            ui.label(text);
+            ui.add_space(10.0);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("  OK  ").clicked() {
+                    close = true;
+                }
+            });
+        });
+        if close || r.should_close() {
+            self.alert = None;
+        }
+    }
+
     /// Ask before a loaded session replaces results that were never saved.
     fn session_confirm(&mut self, ctx: &egui::Context) {
         let Some((name, _)) = &self.pending_session else { return };
@@ -814,6 +838,7 @@ impl eframe::App for App {
             rec.successes = self.run_successes;
         }
         self.session_confirm(ui.ctx());
+        self.alert_dialog(ui.ctx());
         if !self.is_idle() {
             // Keep the elapsed time and "last success" counters moving.
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
