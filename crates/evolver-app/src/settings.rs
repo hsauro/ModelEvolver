@@ -42,13 +42,19 @@ fn range_pair(ui: &mut egui::Ui, label: &str, lo: &mut usize, hi: &mut usize, ma
 }
 
 /// A small-number field shown in scientific notation.
+/// Smallest tolerance that can be entered.
+const MIN_TOLERANCE: f64 = 1e-30;
+
 fn sci(ui: &mut egui::Ui, label: &str, v: &mut f64, help: &str) -> bool {
     ui.horizontal(|ui| {
-        let r = ui.add(
+        // Wide enough for values like 1e-18 or 2.5e-12; shown exactly (no rounding).
+        let h = ui.spacing().interact_size.y;
+        let r = ui.add_sized(
+            [78.0, h],
             egui::DragValue::new(v)
-                .range(1e-15..=1.0)
+                .range(MIN_TOLERANCE..=1.0)
                 .speed(0.0)
-                .custom_formatter(|x, _| format!("{x:.0e}"))
+                .custom_formatter(|x, _| format!("{x:e}"))
                 .custom_parser(|s| s.trim().parse::<f64>().ok()),
         );
         let mut changed = r.changed();
@@ -57,7 +63,7 @@ fn sci(ui: &mut egui::Ui, label: &str, v: &mut f64, help: &str) -> bool {
             changed = true;
         }
         if ui.small_button("/10").on_hover_text("Divide by 10 (tighter)").clicked() {
-            *v = (*v / 10.0).max(1e-15);
+            *v = (*v / 10.0).max(MIN_TOLERANCE);
             changed = true;
         }
         ui.label(label).on_hover_text(help);
