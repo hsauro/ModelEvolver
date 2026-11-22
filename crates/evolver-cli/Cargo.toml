@@ -1,6 +1,6 @@
 [package]
 name = "evolver-cli"
-version = "0.1.0"
+version = "1.0.0"
 description = "Headless batch runner for ModelEvolver (development, validation, benchmarks)."
 edition.workspace = true
 license.workspace = true

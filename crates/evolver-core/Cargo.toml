@@ -1,6 +1,6 @@
 [package]
 name = "evolver-core"
-version = "0.1.0"
+version = "1.0.0"
 description = "Core of ModelEvolver: reaction networks, diffsol BDF simulation, objectives and the GA. No UI, no threads."
 edition.workspace = true
 license.workspace = true

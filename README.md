@@ -9,6 +9,8 @@ cores) and on the desktop. It is a Rust port of the Object Pascal
 
 **Try it in the browser: https://hsauro.github.io/ModelEvolver/**
 
+Current version: **1.0.0**.
+
 ## Using the app
 
 1. **Choose the objective** (left panel): *Sustained oscillation* (default) or
