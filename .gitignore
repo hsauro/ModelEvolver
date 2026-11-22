@@ -1,3 +1,6 @@
 /target
 /crates/evolver-app/dist
 /results*
+Capture.PNG
+modelevolver-configuration.json
+modelevolver-session.json
