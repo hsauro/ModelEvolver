@@ -32,6 +32,8 @@ Current version: **1.0.1** ([release notes](docs/RELEASE_NOTES_1.0.1.md)).
 4. Press **Start**.
    - **Stop** starts no new experiments and lets the running ones finish.
    - **Cancel** abandons the running experiments; finished results are kept.
+   - **New** clears all results and statistics to start afresh (settings are kept;
+     it asks first if there are successes you have not saved).
 5. Watch the **Progress** tab: one row per running experiment, plus the best
    fitness curves. The dashed orange line is the give-up threshold, green is viable,
    blue is converged. *View best* shows a running experiment's current best network.

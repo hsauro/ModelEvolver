@@ -153,6 +153,8 @@ pub struct App {
     runner_ctx: egui::Context,
     /// A message shown in a dialog (title, text), e.g. why a file could not be loaded.
     pub alert: Option<(String, String)>,
+    /// Waiting for the user to confirm clearing unsaved results.
+    pending_clear: bool,
 }
 
 impl App {
@@ -201,6 +203,7 @@ impl App {
             pending_session: None,
             runner_ctx: cc.egui_ctx.clone(),
             alert: None,
+            pending_clear: false,
         };
         app.files.ctx = Some(cc.egui_ctx.clone());
         install_leave_warning(app.leave_guard.clone());
@@ -402,6 +405,18 @@ impl App {
             {
                 self.runner.cancel();
                 self.set_status("Run cancelled");
+            }
+            let has_results = !self.results.is_empty() || self.loaded_times.is_some();
+            if ui
+                .add_enabled(idle && has_results, egui::Button::new("New"))
+                .on_hover_text("Clear all results and statistics to start afresh (settings are kept)")
+                .clicked()
+            {
+                if self.unsaved_successes > 0 {
+                    self.pending_clear = true;
+                } else {
+                    self.clear_results();
+                }
             }
             ui.separator();
             ui.label("CPU usage").on_hover_text("Share of this computer's processor threads a run may use");
@@ -693,6 +708,74 @@ impl App {
         }
     }
 
+    /// Remove every result and statistic; settings are kept.
+    pub fn clear_results(&mut self) {
+        self.results.clear();
+        self.runs.clear();
+        self.run_no = 0;
+        self.run_cfg = None;
+        self.run_successes = 0;
+        self.run_finished = 0;
+        self.run_failed = 0;
+        self.last_success = None;
+        self.unsaved_successes = 0;
+        self.loaded_times = None;
+        self.selection = None;
+        self.results_selected = None;
+        self.progress_selected = None;
+        self.model.cache = None;
+        self.grid_cache.clear();
+        self.grid_page = 0;
+        self.runner = Runner::new(self.runner_ctx.clone());
+        self.tab = Tab::Progress;
+        self.set_status("Cleared: ready for a new run");
+    }
+
+    fn clear_confirm(&mut self, ctx: &egui::Context) {
+        if !self.pending_clear {
+            return;
+        }
+        let mut choice = None;
+        egui::Modal::new(egui::Id::unique("clear_confirm")).show(ctx, |ui| {
+            ui.set_width(420.0);
+            ui.label(RichText::new("Clear all results?").size(17.0).family(bold()));
+            ui.add_space(6.0);
+            ui.label(format!(
+                "There are {} results, {} of them successes not yet saved. Clearing removes them.",
+                self.results.len(),
+                self.unsaved_successes
+            ));
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button("Save session first...").clicked() {
+                    choice = Some(0);
+                }
+                if ui.button("Clear").clicked() {
+                    choice = Some(1);
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(2);
+                }
+            });
+        });
+        match choice {
+            Some(0) => {
+                self.save_session();
+                self.pending_clear = false;
+                // Clear only if the save went through (it resets the unsaved count).
+                if self.unsaved_successes == 0 {
+                    self.clear_results();
+                }
+            }
+            Some(1) => {
+                self.pending_clear = false;
+                self.clear_results();
+            }
+            Some(2) => self.pending_clear = false,
+            _ => {}
+        }
+    }
+
     /// Ask before a loaded session replaces results that were never saved.
     fn session_confirm(&mut self, ctx: &egui::Context) {
         let Some((name, _)) = &self.pending_session else { return };
@@ -843,6 +926,7 @@ impl eframe::App for App {
             rec.successes = self.run_successes;
         }
         self.session_confirm(ui.ctx());
+        self.clear_confirm(ui.ctx());
         self.alert_dialog(ui.ctx());
         if !self.is_idle() {
             // Keep the elapsed time and "last success" counters moving.
