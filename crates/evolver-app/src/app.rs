@@ -265,7 +265,12 @@ impl App {
     fn handle_runner(&mut self) {
         for event in self.runner.poll() {
             match event {
-                RunnerEvent::Finished(r, secs) => {
+                RunnerEvent::Finished(mut r, secs) => {
+                    // The per-generation history and the stored trajectory are not
+                    // used once an experiment has finished (plots are re-simulated);
+                    // dropping them keeps large runs small (~100 kB -> a few kB each).
+                    r.history = Vec::new();
+                    r.display = None;
                     self.run_finished += 1;
                     let (cfg, target) = self.run_cfg.clone().unwrap_or_else(|| (Rc::new(self.cfg.clone()), Rc::new(self.target.clone())));
                     if r.viable {
