@@ -42,24 +42,34 @@ fn range_pair(ui: &mut egui::Ui, label: &str, lo: &mut usize, hi: &mut usize, ma
 }
 
 /// A small-number field shown in scientific notation.
-/// Smallest tolerance that can be entered.
+/// Smallest and largest tolerance that can be entered (larger tolerances make
+/// the simulations meaningless).
 const MIN_TOLERANCE: f64 = 1e-30;
+const MAX_TOLERANCE: f64 = evolver_core::config::MAX_TOLERANCE;
 
 fn sci(ui: &mut egui::Ui, label: &str, v: &mut f64, help: &str) -> bool {
     ui.horizontal(|ui| {
         // Wide enough for values like 1e-18 or 2.5e-12; shown exactly (no rounding).
         let h = ui.spacing().interact_size.y;
+        // Text outside the allowed range (or not a number) is ignored: the field
+        // keeps its previous value instead of jumping to a limit.
         let r = ui.add_sized(
             [78.0, h],
             egui::DragValue::new(v)
-                .range(MIN_TOLERANCE..=1.0)
+                .range(MIN_TOLERANCE..=MAX_TOLERANCE)
+                .clamp_existing_to_range(false)
+                // Apply only when editing ends: while typing "1e-6" the text
+                // passes through "1", which would otherwise become the tolerance.
+                .update_while_editing(false)
                 .speed(0.0)
                 .custom_formatter(|x, _| format!("{x:e}"))
-                .custom_parser(|s| s.trim().parse::<f64>().ok()),
+                .custom_parser(|s| {
+                    s.trim().parse::<f64>().ok().filter(|x| (MIN_TOLERANCE..=MAX_TOLERANCE).contains(x))
+                }),
         );
         let mut changed = r.changed();
         if ui.small_button("x10").on_hover_text("Multiply by 10 (looser)").clicked() {
-            *v = (*v * 10.0).min(1.0);
+            *v = (*v * 10.0).min(MAX_TOLERANCE);
             changed = true;
         }
         if ui.small_button("/10").on_hover_text("Divide by 10 (tighter)").clicked() {
@@ -378,7 +388,14 @@ impl App {
         });
 
         section(ui, "Solver (advanced)", false, |ui| {
-            ui.label(RichText::new("diffsol adaptive BDF (stiff solver)").small().weak());
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("diffsol adaptive BDF (stiff solver)").small().weak());
+                if ui.small_button("Default tolerances").on_hover_text("rtol 1e-6, atol 1e-10").clicked() {
+                    c.rtol = 1e-6;
+                    c.atol = 1e-10;
+                    ch = true;
+                }
+            });
             ch |= sci(ui, "relative tolerance", &mut c.rtol, "Default 1e-6");
             ch |= sci(ui, "absolute tolerance", &mut c.atol, "Default 1e-10");
             ch |= num(ui, "max steps per output interval", &mut c.max_steps_per_interval, 10..=1_000_000, "Give up beyond this");

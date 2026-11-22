@@ -207,6 +207,20 @@ impl App {
         };
         app.files.ctx = Some(cc.egui_ctx.clone());
         install_leave_warning(app.leave_guard.clone());
+        // Repair stored solver tolerances that are too loose to be meaningful
+        // (an earlier settings field could set them to 1.0).
+        let max_tol = evolver_core::config::MAX_TOLERANCE;
+        if !(app.cfg.rtol > 0.0 && app.cfg.rtol <= max_tol) || !(app.cfg.atol > 0.0 && app.cfg.atol <= max_tol) {
+            let (r, a) = (app.cfg.rtol, app.cfg.atol);
+            app.cfg.rtol = 1e-6;
+            app.cfg.atol = 1e-10;
+            app.alert = Some((
+                "Solver tolerances reset".into(),
+                format!(
+                    "The saved solver tolerances (rtol {r}, atol {a}) were too loose for meaningful simulations                      and have been reset to the defaults (rtol 1e-6, atol 1e-10)."
+                ),
+            ));
+        }
         app.revalidate();
         app
     }

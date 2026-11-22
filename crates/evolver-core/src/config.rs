@@ -101,6 +101,9 @@ pub struct EvolverConfig {
     pub add_tellurium_harness: bool,
 }
 
+/// Largest allowed solver tolerance (relative or absolute).
+pub const MAX_TOLERANCE: f64 = 1e-2;
+
 pub const PASCAL_INITIAL_CONCENTRATIONS: [f64; 20] =
     [2.0, 5.0, 7.0, 10.0, 1.0, 0.5, 3.0, 7.0, 12.0, 4.0, 1.0, 3.0, 7.0, 9.0, 1.0, 7.0, 2.0, 8.0, 5.0, 10.0];
 
@@ -235,8 +238,11 @@ impl EvolverConfig {
         if self.osc_confirm_t_end > 0.0 && self.osc_confirm_n_points < 32 {
             e.push("confirmation window needs at least 32 points".into());
         }
-        if self.rtol <= 0.0 || self.atol <= 0.0 {
-            e.push("solver tolerances must be > 0".into());
+        if !(self.rtol > 0.0 && self.rtol <= MAX_TOLERANCE) || !(self.atol > 0.0 && self.atol <= MAX_TOLERANCE) {
+            e.push(format!(
+                "solver tolerances must be between 0 and {MAX_TOLERANCE} (now rtol {}, atol {});                  larger values make the simulations meaningless (default 1e-6 and 1e-10)",
+                self.rtol, self.atol
+            ));
         }
         if self.max_concentration <= 0.0 {
             e.push("max concentration must be > 0".into());
@@ -396,6 +402,14 @@ mod tests {
         assert_eq!(cfg.worker_count(1), 1);
         let explicit = EvolverConfig { num_workers: 4, ..Default::default() };
         assert_eq!(explicit.worker_count(20), 4);
+    }
+
+    #[test]
+    fn loose_tolerances_are_rejected() {
+        let cfg = EvolverConfig { rtol: 1.0, atol: 1.0, ..Default::default() };
+        assert!(cfg.validate().is_err());
+        let ok = EvolverConfig { rtol: 1e-10, atol: 1e-18, ..Default::default() };
+        assert!(ok.validate().is_ok());
     }
 
     #[test]
