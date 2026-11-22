@@ -220,3 +220,16 @@ more than 10% without slowing down.
   start-up phase for drift and starved the search. It is therefore applied only to the
   300-unit confirmation run and to model reduction: drifting models never count as
   successes, at a cost of about 5% in throughput.
+
+## Positivity guard: no negative concentrations (2026-11-21)
+
+A model reported as an oscillator (fitness 0.011) owed its oscillation to S2 crossing
+zero by round-off and then running away on the negative side through an autocatalytic
+reaction (Pascal bug B21; confirmed in Tellurium: at rtol 1e-10/atol 1e-18 S2 stays at
+zero and F = 0.03). Fix: rate laws use max(concentration, 0) with a matching Jacobian,
+and any sample below -1e-6 rejects the simulation.
+
+- The model now scores F = 0.145 (not viable); kept as a regression test.
+- Pascal corpus: 404 of 437 viable (before: 416 of 441), i.e. ~3% relied on the artifact.
+- Throughput, 8 cores, 5 min, seed 202: 9.1 successes/min (47 of 188) vs 9.5 before,
+  within run-to-run variation.

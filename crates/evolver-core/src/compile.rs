@@ -15,19 +15,25 @@ pub enum Operand {
 }
 
 impl Operand {
+    /// The concentration used in a rate law. Negative values (which the true
+    /// mass-action solution never takes, but a numerical solution can by a
+    /// round-off amount) count as zero: a species that reaches zero then stays
+    /// there, instead of an autocatalytic term amplifying the error into a
+    /// spurious negative oscillation.
     #[inline]
     fn value(self, y: &[f64]) -> f64 {
         match self {
-            Operand::State(i) => y[i as usize],
+            Operand::State(i) => y[i as usize].max(0.0),
             Operand::Const(c) => c,
         }
     }
 
+    /// Derivative of `value` along `v` (zero where the value is clamped).
     #[inline]
-    fn tangent(self, v: &[f64]) -> f64 {
+    fn tangent(self, y: &[f64], v: &[f64]) -> f64 {
         match self {
-            Operand::State(i) => v[i as usize],
-            Operand::Const(_) => 0.0,
+            Operand::State(i) if y[i as usize] > 0.0 => v[i as usize],
+            _ => 0.0,
         }
     }
 }
@@ -120,10 +126,10 @@ impl CompiledModel {
         out.fill(0.0);
         for t in &self.terms {
             let a = t.a.value(y);
-            let da = t.a.tangent(v);
+            let da = t.a.tangent(y, v);
             let drate = match t.b {
                 None => t.k * da,
-                Some(b) => t.k * (da * b.value(y) + a * b.tangent(v)),
+                Some(b) => t.k * (da * b.value(y) + a * b.tangent(y, v)),
             };
             if drate != 0.0 {
                 self.scatter(t, drate, out);

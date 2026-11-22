@@ -262,3 +262,24 @@ has `maxNumberOfSpecies` species or `maxNumberOfReactions` reactions unless min 
 network gets 3..8 reactions. B1 currently hides this for species.
 
 Rust fix: both ranges are inclusive (`range(min, max + 1)`).
+
+## B21 (High) Negative concentrations create spurious oscillations
+
+The ODE right-hand side (`computeODEsForCvode` / `computeODEsForLsoda`) uses
+concentrations exactly as the solver supplies them. The true mass-action solution
+never goes negative, but when a species is driven to zero the numerical solution
+can cross zero by round-off. If that species is autocatalytic (for example
+`S2 -> S2 + S2`), the negative value is amplified: the species runs away on the
+negative side and can produce a large oscillation that does not exist. The GA then
+rewards the artifact.
+
+Found in the Rust port (same weakness, before the fix) with a model reported as
+an oscillator (fitness 0.011). In Tellurium with the app's tolerances (rtol 1e-6,
+atol 1e-10), S2 reaches -15.9 and is negative 99% of the time (F = 0.985); with
+rtol 1e-10, atol 1e-18, S2 stays at zero and nothing oscillates (F = 0.03).
+Re-scoring the Pascal corpus with the fix: 404 of 437 viable instead of 416 of 441,
+so about 12 Pascal oscillators (~3%) depended on this artifact.
+
+Rust fix: a positivity guard in the rate laws (a concentration below zero counts as
+zero, with a matching Jacobian), so a species that reaches zero stays there; and
+any sample below -1e-6 rejects the simulation as invalid.

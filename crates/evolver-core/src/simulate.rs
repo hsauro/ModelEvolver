@@ -47,6 +47,8 @@ pub enum SimError {
     Solver { t: f64, message: String },
     TooManySteps { t: f64 },
     Runaway { t: f64 },
+    /// A concentration went clearly negative: the numerical solution is not valid.
+    Negative { t: f64 },
     /// A species keeps growing through the window (state index).
     Drift { state: usize },
 }
@@ -59,10 +61,15 @@ impl std::fmt::Display for SimError {
             SimError::Solver { t, message } => write!(f, "solver failed at t = {t:.4}: {message}"),
             SimError::TooManySteps { t } => write!(f, "too many solver steps near t = {t:.4}"),
             SimError::Runaway { t } => write!(f, "a concentration ran away at t = {t:.4}"),
+            SimError::Negative { t } => write!(f, "a concentration went negative at t = {t:.4}"),
             SimError::Drift { state } => write!(f, "floating species {state} grows without bound"),
         }
     }
 }
+
+/// How far below zero a concentration may dip (round-off) before the
+/// simulation is rejected.
+pub const NEGATIVE_TOLERANCE: f64 = 1e-6;
 
 /// A sampled solution: `t[i]`, and one column per floating species.
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -107,6 +114,11 @@ pub fn simulate(model: &CompiledModel, opts: &SimOptions) -> Result<Trajectory, 
         for (col, &v) in traj.cols.iter_mut().zip(y) {
             if !v.is_finite() || v.abs() > opts.max_concentration {
                 return Err(SimError::Runaway { t });
+            }
+            // Round-off can dip a species a hair below zero; more than that means
+            // the numerical solution has left the physical (non-negative) region.
+            if v < -NEGATIVE_TOLERANCE {
+                return Err(SimError::Negative { t });
             }
             col.push(v);
         }
@@ -193,6 +205,31 @@ mod tests {
         assert!((tr.cols[0][4] - 0.7158).abs() < 1e-3);
         assert!((tr.cols[1][4] - 9.185e-6).abs() < 1e-7);
         assert!((tr.cols[2][4] - 0.2842).abs() < 1e-3);
+    }
+
+    #[test]
+    fn species_reaching_zero_stays_there() {
+        // A model the app once reported as an oscillator: S2 is driven to zero,
+        // but without the positivity guard round-off pushed it negative and the
+        // autocatalytic J3 (S2 -> 2 S2) produced a large spurious oscillation.
+        use crate::import::network_from_antimony;
+        let text = "J0: $S0 -> S1; k0*S0; J1: S3 + S2 -> S3; k1*S3*S2; J2: S2 -> S3 + S2; k2*S2;
+            J3: S2 -> S2 + S2; k3*S2; J4: S3 + S1 -> S3; k4*S3*S1; J5: S2 + S2 -> S3; k5*S2*S2;
+            J6: $S0 -> S1; k6*S0; J7: S3 + S1 -> $S4; k7*S3*S1;
+            S0 = 2; S1 = 5; S2 = 7; S3 = 10; S4 = 1;
+            k0 = 0.039356780316282286; k1 = 6.4454558427278; k2 = 2.580745500652178;
+            k3 = 0.6181585293653639; k4 = 0.05582243035302341; k5 = 0.39953975275522874;
+            k6 = 0.8653727420451007; k7 = 0.3553160910136436;";
+        let m = network_from_antimony(text).unwrap();
+        let model = m.net.compile(&m.init);
+        let opts = SimOptions { t_end: 300.0, n_points: 4096, ..Default::default() };
+        let tr = simulate(&model, &opts).unwrap();
+        let dt = tr.t[1];
+        let best = tr.cols.iter().map(|c| crate::osc::score_oscillation(c, dt)).fold(0.0, f64::max);
+        assert!(best < 0.3, "spurious oscillation survived: F = {best} (was 0.985)");
+        for c in &tr.cols {
+            assert!(c.iter().all(|&v| v >= -NEGATIVE_TOLERANCE));
+        }
     }
 
     #[test]
